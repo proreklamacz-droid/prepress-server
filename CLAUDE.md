@@ -244,3 +244,37 @@ GHOSTSCRIPT_PATH=/usr/bin/gs
 - Projekt je součástí širšího ekosystému: fakturace, YT Digest, claude-context
 - Symlink `~/claude-context/prepress-server/` → tento CLAUDE.md po vytvoření přidat
 - Po vytvoření přidat do `ai-registry`
+
+---
+
+## Stav vývoje
+
+### ✅ Sprint 1 — HOTOVO (19. 5. 2026)
+- Docker stack: FastAPI backend (8687) + Next.js frontend (8686) + Redis + RQ worker
+- Upload PDF + základní analýza (stránky, rozměry, PDF verze)
+- Preflight engine: fonty, rozlišení/DPI, barevný model (CMYK/RGB)
+- LLM report v češtině přes Groq (llama-3.3-70b-versatile)
+- Náhled první stránky (PNG)
+- Job queue (3 fronty: high/normal/low)
+- Tmavý frontend, dashboard, detail jobu
+- Běží na RPi5 (192.168.0.122:8686)
+- GitHub: proreklamacz-droid/prepress-server
+
+### ✅ Sprint 2 — HOTOVO (19. 5. 2026)
+1. **Správa souborů** — mazání v UI (confirm dialog v hlavičce jobu)
+2. **Auto cleanup** — APScheduler (každou noc 3:00), POST /api/jobs/cleanup, GET /api/jobs/stats
+3. **Storage widget** — na dashboardu: disk usage, status breakdown, ruční cleanup
+4. **Imposice** — plný engine: grid, booklet saddle stitch, cut&stack + tiskové značky + náhled archu
+5. **Tab UI** — job detail: tabbed panel Preflight / Imposice / Smart Repair
+
+### 🔜 Sprint 3 — TODO
+- Dokončení preflight engine (overprint, hairlines, spot barvy, vrstvy, ink coverage, DTF)
+- Smart Repair (RGB→CMYK, flatten transparency, add bleed, DTF bílá vrstva)
+- Telegram notifikace
+
+### Známé opravy provedené při Sprintu 1
+- next.config.ts → next.config.mjs (starší Next.js nepodporuje .ts)
+- npm ci → npm install (chybějící package-lock.json)
+- Odstraněn volume mount ./frontend:/app (přepisoval build)
+- Přidána složka frontend/public/
+- Opraveno doc.pdf_version() → doc.metadata.get("format")

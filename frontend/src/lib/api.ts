@@ -57,6 +57,89 @@ export interface Job {
   preflight?: PreflightResult | null;
 }
 
+export interface ImpositionConfig {
+  id: string;
+  job_id: string;
+  imposition_type: "grid" | "booklet_saddle" | "cut_stack";
+  sheet_format: string;
+  sheet_width_mm: number;
+  sheet_height_mm: number;
+  rows: number;
+  cols: number;
+  gap_h_mm: number;
+  gap_v_mm: number;
+  margin_top_mm: number;
+  margin_right_mm: number;
+  margin_bottom_mm: number;
+  margin_left_mm: number;
+  scale: number;
+  rotation: number;
+  marks_crop: boolean;
+  marks_fold: boolean;
+  marks_info: boolean;
+  marks_registration: boolean;
+  output_path: string | null;
+}
+
+export interface ImpositionResult {
+  status: string;
+  job_id: string;
+  output_path: string;
+  sheet_count: number;
+  pages_per_sheet: number;
+  total_pages_imposed: number;
+  sheet_width_mm: number;
+  sheet_height_mm: number;
+  processing_time_ms: number;
+  warnings: string[];
+}
+
+export interface ImpositionState {
+  status: "not_run" | "done" | "output_missing";
+  job_id: string;
+  config?: ImpositionConfig;
+}
+
+export interface SheetFormat {
+  name: string;
+  width_mm: number;
+  height_mm: number;
+}
+
+export interface StorageStats {
+  total_jobs: number;
+  status_counts: Record<string, number>;
+  disk: {
+    uploads_bytes: number;
+    outputs_bytes: number;
+    total_bytes: number;
+  };
+  oldest_job: string | null;
+  newest_job: string | null;
+}
+
+export interface ImpositionRequestBody {
+  imposition_type?: string;
+  sheet_format?: string;
+  sheet_width_mm?: number;
+  sheet_height_mm?: number;
+  rows?: number;
+  cols?: number;
+  gap_h_mm?: number;
+  gap_v_mm?: number;
+  margin_top_mm?: number;
+  margin_right_mm?: number;
+  margin_bottom_mm?: number;
+  margin_left_mm?: number;
+  scale?: number;
+  rotation?: number;
+  marks_crop?: boolean;
+  marks_fold?: boolean;
+  marks_info?: boolean;
+  marks_registration?: boolean;
+  page_range?: number[] | null;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, options);
   if (!res.ok) {
@@ -110,6 +193,37 @@ export const api = {
 
   getPreflight: (id: string): Promise<PreflightResult> =>
     request(`/jobs/${id}/preflight`),
+
+  // Imposice
+  startImposition: (id: string, body: ImpositionRequestBody): Promise<ImpositionResult> =>
+    request(`/jobs/${id}/impose`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  getImposition: (id: string): Promise<ImpositionState> =>
+    request(`/jobs/${id}/impose`),
+
+  getSheetFormats: (): Promise<SheetFormat[]> =>
+    request("/jobs/imposition/formats"),
+
+  sheetPreviewUrl: (id: string): string => `${BASE}/jobs/${id}/impose/preview`,
+  impositionDownloadUrl: (id: string): string => `${BASE}/jobs/${id}/impose/download`,
+
+  // Stats & cleanup
+  getStats: (): Promise<StorageStats> => request("/jobs/stats"),
+
+  runCleanup: (olderThanDays?: number): Promise<{
+    deleted_jobs: number;
+    freed_bytes: number;
+    older_than_days: number;
+    cutoff: string;
+    errors: string[];
+  }> => {
+    const qs = olderThanDays ? `?older_than_days=${olderThanDays}` : "";
+    return request(`/jobs/cleanup${qs}`, { method: "POST" });
+  },
 
   previewUrl: (id: string): string => `${BASE}/jobs/${id}/preview`,
 

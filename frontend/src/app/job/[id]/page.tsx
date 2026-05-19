@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, Job, PreflightResult } from "@/lib/api";
 import StatusBadge from "@/components/StatusBadge";
+import ImpositionPanel from "@/components/ImpositionPanel";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -64,6 +65,9 @@ function ColorspaceBadge({ cs }: { cs: string | null }) {
   );
 }
 
+// Tabs for the actions panel
+type ActionTab = "preflight" | "imposition" | "repair";
+
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -73,6 +77,9 @@ export default function JobDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [preflightRunning, setPreflightRunning] = useState(false);
   const [preflightError, setPreflightError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<ActionTab>("preflight");
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchJob = useCallback(async () => {
@@ -93,7 +100,6 @@ export default function JobDetailPage() {
     fetchJob();
   }, [fetchJob]);
 
-  // Stop polling when job is no longer processing
   useEffect(() => {
     if (job && job.status !== "processing" && pollRef.current) {
       clearInterval(pollRef.current);
@@ -114,9 +120,7 @@ export default function JobDetailPage() {
     setPreflightRunning(true);
     try {
       await api.startPreflight(id);
-      // Optimistically mark as processing
       setJob((prev) => prev ? { ...prev, status: "processing" } : prev);
-      // Poll every 3s until done
       pollRef.current = setInterval(async () => {
         const updated = await fetchJob();
         if (updated && updated.status !== "processing" && updated.status !== "queued") {
@@ -128,6 +132,18 @@ export default function JobDetailPage() {
     } catch (err) {
       setPreflightError(err instanceof Error ? err.message : "Spuštění selhalo.");
       setPreflightRunning(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!job) return;
+    setDeleting(true);
+    try {
+      await api.deleteJob(job.id);
+      router.push("/");
+    } catch {
+      setDeleting(false);
+      setDeleteConfirm(false);
     }
   }
 
@@ -151,6 +167,12 @@ export default function JobDetailPage() {
   const firstPage = job.page_dimensions?.[0];
   const preflight = job.preflight;
 
+  const TABS: { id: ActionTab; label: string }[] = [
+    { id: "preflight", label: "Preflight" },
+    { id: "imposition", label: "Imposice" },
+    { id: "repair", label: "Smart Repair" },
+  ];
+
   return (
     <div className="space-y-6">
       {/* Back link */}
@@ -172,7 +194,36 @@ export default function JobDetailPage() {
               Nahráno: {formatDate(job.created_at)}
             </p>
           </div>
-          <StatusBadge status={job.status} />
+          <div className="flex items-center gap-3">
+            <StatusBadge status={job.status} />
+            {/* Delete button */}
+            {!deleteConfirm ? (
+              <button
+                onClick={() => setDeleteConfirm(true)}
+                className="text-xs text-zinc-600 hover:text-red-400 transition-colors"
+                title="Smazat job"
+              >
+                Smazat
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-zinc-400">Opravdu smazat?</span>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="text-xs text-red-400 hover:text-red-300 font-medium"
+                >
+                  {deleting ? "Mažu…" : "Ano"}
+                </button>
+                <button
+                  onClick={() => setDeleteConfirm(false)}
+                  className="text-xs text-zinc-500 hover:text-zinc-300"
+                >
+                  Ne
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5">
@@ -196,7 +247,7 @@ export default function JobDetailPage() {
         )}
       </div>
 
-      {/* Preview + actions row */}
+      {/* Preview + tabbed actions */}
       <div className="grid md:grid-cols-2 gap-6">
         {/* Preview */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex flex-col gap-3">
@@ -222,48 +273,76 @@ export default function JobDetailPage() {
           </a>
         </div>
 
-        {/* Actions */}
-        <div className="space-y-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
-            <h2 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
-              Akce
-            </h2>
-
-            <button
-              onClick={handleStartPreflight}
-              disabled={preflightRunning || job.status === "processing"}
-              className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors text-sm"
-            >
-              {preflightRunning || job.status === "processing"
-                ? "Kontroluji..."
-                : "Spustit Preflight"}
-            </button>
-
-            {preflightError && (
-              <p className="text-red-400 text-xs">{preflightError}</p>
-            )}
-
-            <button
-              disabled
-              className="w-full bg-zinc-800 text-zinc-600 font-medium py-2.5 px-4 rounded-lg text-sm cursor-not-allowed"
-            >
-              Imposice (brzy)
-            </button>
-            <button
-              disabled
-              className="w-full bg-zinc-800 text-zinc-600 font-medium py-2.5 px-4 rounded-lg text-sm cursor-not-allowed"
-            >
-              Smart Repair (brzy)
-            </button>
+        {/* Tabbed actions */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+          {/* Tab bar */}
+          <div className="flex border-b border-zinc-800">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex-1 py-2.5 text-xs font-medium transition-colors ${
+                  activeTab === tab.id
+                    ? "text-zinc-100 border-b-2 border-blue-500 -mb-px"
+                    : "text-zinc-500 hover:text-zinc-300"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
 
-          {job.notes && (
-            <div className="bg-amber-950 border border-amber-800 rounded-xl p-4">
-              <p className="text-xs text-amber-400">{job.notes}</p>
-            </div>
-          )}
+          <div className="p-4">
+            {/* Preflight tab */}
+            {activeTab === "preflight" && (
+              <div className="space-y-3">
+                <button
+                  onClick={handleStartPreflight}
+                  disabled={preflightRunning || job.status === "processing"}
+                  className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors text-sm"
+                >
+                  {preflightRunning || job.status === "processing"
+                    ? "Kontroluji..."
+                    : "Spustit Preflight"}
+                </button>
+                {preflightError && (
+                  <p className="text-red-400 text-xs">{preflightError}</p>
+                )}
+                {preflight && (
+                  <div className="pt-2 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-zinc-400">Výsledek</p>
+                      <SeverityBadge severity={preflight.severity} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Imposition tab */}
+            {activeTab === "imposition" && (
+              <ImpositionPanel job={job} onDone={fetchJob} />
+            )}
+
+            {/* Repair tab */}
+            {activeTab === "repair" && (
+              <div className="text-center py-8">
+                <p className="text-zinc-600 text-sm">Smart Repair — Sprint 3</p>
+                <p className="text-zinc-700 text-xs mt-1">
+                  RGB→CMYK, flatten transparency, add bleed, DTF bílá vrstva
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Notes */}
+      {job.notes && (
+        <div className="bg-amber-950 border border-amber-800 rounded-xl p-4">
+          <p className="text-xs text-amber-400">{job.notes}</p>
+        </div>
+      )}
 
       {/* Preflight results */}
       {preflight && (
@@ -309,7 +388,6 @@ export default function JobDetailPage() {
             </div>
           </div>
 
-          {/* LLM Report */}
           {preflight.llm_report_cs && (
             <div className="bg-zinc-950 border border-zinc-700 rounded-lg p-4">
               <p className="text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">

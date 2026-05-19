@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api, Job } from "@/lib/api";
 import UploadZone from "@/components/UploadZone";
 import JobList from "@/components/JobList";
+import StorageWidget from "@/components/StorageWidget";
 
 export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -45,6 +46,8 @@ export default function Dashboard() {
         </h2>
         <UploadZone onUpload={handleUpload} />
       </div>
+
+      <StorageWidget onCleanup={fetchJobs} />
 
       <div>
         <div className="flex items-center justify-between mb-4">
