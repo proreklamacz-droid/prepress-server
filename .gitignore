@@ -1,0 +1,12 @@
+.env
+data/uploads/*
+data/outputs/*
+data/db/*
+!data/uploads/.gitkeep
+!data/outputs/.gitkeep
+!data/db/.gitkeep
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+.next/

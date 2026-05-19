@@ -1,0 +1,69 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "8686:3000"
+    environment:
+      - BACKEND_URL=http://backend:8687
+      - NEXT_PUBLIC_API_URL=
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8687:8687"
+    environment:
+      - DATABASE_URL=sqlite:////app/data/db/prepress.db
+      - REDIS_URL=redis://redis:6379
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - UPLOAD_DIR=/app/data/uploads
+      - OUTPUT_DIR=/app/data/outputs
+      - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-500}
+      - GHOSTSCRIPT_PATH=/usr/bin/gs
+    depends_on:
+      - redis
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./backend:/app/backend
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: rq worker --url redis://redis:6379 prepress-high prepress-normal prepress-low
+    environment:
+      - DATABASE_URL=sqlite:////app/data/db/prepress.db
+      - REDIS_URL=redis://redis:6379
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - UPLOAD_DIR=/app/data/uploads
+      - OUTPUT_DIR=/app/data/outputs
+      - GHOSTSCRIPT_PATH=/usr/bin/gs
+    depends_on:
+      - redis
+      - backend
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./backend:/app/backend
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"  # Jiný port aby nekolidoval s případným jiným Redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:
