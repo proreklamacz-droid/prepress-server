@@ -313,13 +313,13 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
   const [marginL, setMarginL] = useState(10);
   const [hAlign, setHAlign] = useState<"left" | "center" | "right">("center");
   const [vAlign, setVAlign] = useState<"top" | "center" | "bottom">("center");
-  const [scale, setScale] = useState(1.0);
+  const [scale, setScale] = useState(100);  // v % (100 = 100 %)
   const [rotation, setRotation] = useState(0);
   const [autoFit, setAutoFit] = useState(true);
   const [backJobId, setBackJobId] = useState("");
 
   // Marks
-  const [marksEnabled, setMarksEnabled] = useState(true);
+  const [marksEnabled, setMarksEnabled] = useState(false);
   const [marksStyle, setMarksStyle] = useState<"lines" | "frame">("lines");
   const [marksLength, setMarksLength] = useState(5.0);
   const [marksOffset, setMarksOffset] = useState(3.0);
@@ -327,8 +327,8 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
   const [marksColorPreset, setMarksColorPreset] = useState<"black" | "white" | "custom">("black");
   const [marksColorHex, setMarksColorHex] = useState("#000000");
   const [marksFold, setMarksFold] = useState(false);
-  const [marksInfo, setMarksInfo] = useState(true);
-  const [marksReg, setMarksReg] = useState(true);
+  const [marksInfo, setMarksInfo] = useState(false);
+  const [marksReg, setMarksReg] = useState(false);
 
   useEffect(() => {
     api.getSheetFormats().then(setFormats).catch(() => {});
@@ -360,6 +360,50 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
 
   const marksColor = marksColorPreset === "custom" ? marksColorHex : marksColorPreset;
 
+  // Live kalkulačka
+  const [calc, setCalc] = React.useState<{
+    actual_scale_pct: number;
+    actual_cols: number;
+    actual_rows: number;
+    pages_per_sheet: number;
+    page_size_mm: { w: number; h: number };
+    block_size_mm: { w: number; h: number };
+    avail_size_mm: { w: number; h: number };
+    utilization_pct: number;
+    fits: boolean;
+    warnings: string[];
+  } | null>(null);
+  const calcTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    if (!["grid", "cut_stack"].includes(type)) { setCalc(null); return; }
+    if (calcTimerRef.current) clearTimeout(calcTimerRef.current);
+    calcTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/jobs/${job.id}/impose/calculate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imposition_type: type,
+            sheet_format: format,
+            sheet_width_mm: customW,
+            sheet_height_mm: customH,
+            rows, cols,
+            gap_h_mm: gapH, gap_v_mm: gapV,
+            margin_top_mm: marginT, margin_right_mm: marginR,
+            margin_bottom_mm: marginB, margin_left_mm: marginL,
+            scale: scale / 100,  // UI je v %, backend chce 0-1
+            rotation,
+            auto_fit: autoFit,
+          }),
+        });
+        if (res.ok) setCalc(await res.json());
+      } catch {}
+    }, 500);
+    return () => { if (calcTimerRef.current) clearTimeout(calcTimerRef.current); };
+  }, [type, format, customW, customH, rows, cols, gapH, gapV,
+      marginT, marginR, marginB, marginL, scale, rotation, autoFit, job.id]);
+
   // Serializuje aktuální nastavení do objektu pro uložení jako preset
   function currentSettings(): Record<string, unknown> {
     return {
@@ -377,7 +421,7 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
       margin_left_mm: marginL,
       h_align: hAlign,
       v_align: vAlign,
-      scale,
+      scale: scale / 100,
       rotation,
       crop_marks: {
         enabled: marksEnabled,
@@ -410,7 +454,7 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
     if (s.margin_left_mm != null) setMarginL(s.margin_left_mm as number);
     if (s.h_align) setHAlign(s.h_align as "left" | "center" | "right");
     if (s.v_align) setVAlign(s.v_align as "top" | "center" | "bottom");
-    if (s.scale != null) setScale(s.scale as number);
+    if (s.scale != null) setScale(Math.round((s.scale as number) * 100));
     if (s.rotation != null) setRotation(s.rotation as number);
     if (s.marks_fold != null) setMarksFold(s.marks_fold as boolean);
     if (s.marks_info != null) setMarksInfo(s.marks_info as boolean);
@@ -455,7 +499,7 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
       margin_left_mm: marginL,
       h_align: hAlign,
       v_align: vAlign,
-      scale,
+      scale: scale / 100,
       rotation,
       crop_marks: {
         enabled: marksEnabled,
@@ -577,8 +621,42 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
           <p className="text-xs text-zinc-500 mb-1">Rotace</p>
           <BtnGroup options={ROTATIONS} value={String(rotation) as any} onChange={(v) => setRotation(Number(v))} />
         </div>
-        <NumInput label="Měřítko" value={scale} onChange={setScale} min={0.1} max={2} step={0.01} unit="×" />
+        <NumInput label="Měřítko" value={scale} onChange={(v) => setScale(Math.max(1, Math.min(200, Math.round(v))))} min={1} max={200} step={1} unit="%" />
       </div>
+
+      {/* Live kalkulačka výsledku */}
+      {["grid", "cut_stack"].includes(type) && calc && (
+        <div className={`rounded-lg px-3 py-2.5 border text-xs space-y-1.5 ${
+          calc.fits
+            ? "bg-zinc-950 border-zinc-700"
+            : "bg-red-950 border-red-700"
+        }`}>
+          <div className="flex items-center justify-between">
+            <span className="text-zinc-500 uppercase tracking-wider">Výsledek rozložení</span>
+            {!calc.fits && <span className="text-red-400 font-medium">⚠ Nevejde se!</span>}
+            {calc.fits && <span className="text-green-400">{calc.utilization_pct} % plochy</span>}
+          </div>
+          <div className="grid grid-cols-3 gap-x-4 gap-y-1">
+            <div>
+              <p className="text-zinc-600">Rozložení</p>
+              <p className="text-zinc-100 font-medium">{calc.actual_cols} × {calc.actual_rows} = {calc.pages_per_sheet} ks</p>
+            </div>
+            <div>
+              <p className="text-zinc-600">Měřítko</p>
+              <p className={`font-medium ${Math.abs(calc.actual_scale_pct - scale) > 0.5 ? "text-amber-400" : "text-zinc-100"}`}>
+                {calc.actual_scale_pct} %
+              </p>
+            </div>
+            <div>
+              <p className="text-zinc-600">Stránka na archu</p>
+              <p className="text-zinc-100">{calc.page_size_mm.w} × {calc.page_size_mm.h} mm</p>
+            </div>
+          </div>
+          {calc.warnings.map((w, i) => (
+            <p key={i} className="text-amber-400">⚠ {w}</p>
+          ))}
+        </div>
+      )}
 
       {/* Auto-fit info */}
       {["step_repeat", "collage", "fill_sheet", "cut_stack_duplex"].includes(type) && (

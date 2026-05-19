@@ -206,6 +206,90 @@ def start_imposition(
         "sheet_height_mm": result.sheet_height_mm,
         "processing_time_ms": elapsed_ms,
         "warnings": result.warnings,
+        "actual_scale_pct": round(result.actual_scale * 100, 1),
+        "actual_cols": result.actual_cols,
+        "actual_rows": result.actual_rows,
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /{job_id}/impose/calculate — živý výpočet bez generování PDF
+# ---------------------------------------------------------------------------
+
+@router.post("/{job_id}/impose/calculate")
+def calculate_imposition(
+    job_id: str,
+    body: ImpositionRequestBody,
+    db: Session = Depends(get_db),
+):
+    """
+    Vypočítá výsledné parametry imposice (skutečné měřítko, počet kopií atd.)
+    bez generování výstupního PDF. Používá se pro živý feedback v UI.
+    """
+    import fitz as _fitz
+    job = _get_or_404(job_id, db)
+
+    if not job.source_path or not Path(job.source_path).exists():
+        raise HTTPException(status_code=404, detail="Zdrojový soubor nenalezen.")
+
+    if body.sheet_format != "custom" and body.sheet_format in SHEET_FORMATS:
+        w_mm, h_mm = SHEET_FORMATS[body.sheet_format]
+    else:
+        w_mm, h_mm = body.sheet_width_mm, body.sheet_height_mm
+
+    from services.imposition_engine import (
+        MM_TO_PT, PT_TO_MM, _resolve_grid_layout, _auto_fit_grid
+    )
+
+    sheet_w_pt = w_mm * MM_TO_PT
+    sheet_h_pt = h_mm * MM_TO_PT
+    gap_h_pt = body.gap_h_mm * MM_TO_PT
+    gap_v_pt = body.gap_v_mm * MM_TO_PT
+    avail_w = sheet_w_pt - (body.margin_left_mm + body.margin_right_mm) * MM_TO_PT
+    avail_h = sheet_h_pt - (body.margin_top_mm + body.margin_bottom_mm) * MM_TO_PT
+
+    # Přečteme první stránku pro rozměry
+    try:
+        src = _fitz.open(job.source_path)
+        src_rect = src[0].rect
+        src.close()
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Nepodařilo se přečíst PDF: {exc}")
+
+    scale_mode = "fit_grid" if body.auto_fit else "fit_scale"
+    page_w_pt, page_h_pt, actual_scale, actual_cols, actual_rows = _resolve_grid_layout(
+        src_rect.width, src_rect.height,
+        body.cols, body.rows,
+        avail_w, avail_h, gap_h_pt, gap_v_pt,
+        body.scale, scale_mode, body.rotation,
+    )
+
+    pages_per_sheet = actual_cols * actual_rows
+    block_w_mm = (actual_cols * page_w_pt + (actual_cols - 1) * gap_h_pt) * PT_TO_MM
+    block_h_mm = (actual_rows * page_h_pt + (actual_rows - 1) * gap_v_pt) * PT_TO_MM
+    page_w_mm = page_w_pt * PT_TO_MM
+    page_h_mm = page_h_pt * PT_TO_MM
+
+    utilization = (block_w_mm * block_h_mm) / (avail_w * PT_TO_MM * avail_h * PT_TO_MM) * 100
+
+    warnings = []
+    if abs(actual_scale - body.scale) > 0.001:
+        warnings.append(
+            f"Měřítko upraveno na {actual_scale * 100:.1f} % "
+            f"aby se {actual_cols}×{actual_rows} stránek vešlo na arch."
+        )
+
+    return {
+        "actual_scale_pct": round(actual_scale * 100, 1),
+        "actual_cols": actual_cols,
+        "actual_rows": actual_rows,
+        "pages_per_sheet": pages_per_sheet,
+        "page_size_mm": {"w": round(page_w_mm, 1), "h": round(page_h_mm, 1)},
+        "block_size_mm": {"w": round(block_w_mm, 1), "h": round(block_h_mm, 1)},
+        "avail_size_mm": {"w": round(avail_w * PT_TO_MM, 1), "h": round(avail_h * PT_TO_MM, 1)},
+        "utilization_pct": round(utilization, 1),
+        "fits": block_w_mm <= avail_w * PT_TO_MM and block_h_mm <= avail_h * PT_TO_MM,
+        "warnings": warnings,
     }
 
 

@@ -133,6 +133,9 @@ class ImpositionResult:
     sheet_width_mm: float
     sheet_height_mm: float
     warnings: list[str] = field(default_factory=list)
+    actual_scale: float = 1.0       # skutečné použité měřítko (může se lišit od požadovaného)
+    actual_cols: int = 0            # skutečný počet sloupců
+    actual_rows: int = 0            # skutečný počet řádků
 
 
 # ---------------------------------------------------------------------------
@@ -188,9 +191,32 @@ def _impose_grid(req: ImpositionRequest) -> ImpositionResult:
         page_w_pt = src_rect0.width * req.scale
         page_h_pt = src_rect0.height * req.scale
 
-    # Total block size (pages + gaps, no margin)
-    block_w = req.cols * page_w_pt + (req.cols - 1) * gap_h_pt
-    block_h = req.rows * page_h_pt + (req.rows - 1) * gap_v_pt
+    warnings: list[str] = []
+
+    # Dopočítej scale nebo rows/cols aby se NIKDY nepřekročily hranice archu
+    scale_mode = "fit_grid" if req.auto_fit else "fit_scale"
+    page_w_pt, page_h_pt, actual_scale, actual_cols, actual_rows = _resolve_grid_layout(
+        src_rect0.width, src_rect0.height,
+        req.cols, req.rows,
+        avail_w, avail_h, gap_h_pt, gap_v_pt,
+        req.scale, scale_mode, req.rotation,
+    )
+    pages_per_sheet = actual_cols * actual_rows
+
+    if abs(actual_scale - req.scale) > 0.001:
+        warnings.append(
+            f"Měřítko upraveno na {actual_scale * 100:.1f} % "
+            f"aby se {actual_cols}×{actual_rows} stránek vešlo na arch."
+        )
+    if scale_mode == "fit_grid" and (actual_cols != req.cols or actual_rows != req.rows):
+        warnings.append(
+            f"Rozložení upraveno na {actual_cols}×{actual_rows} "
+            f"(zadáno {req.cols}×{req.rows}) pro měřítko {actual_scale * 100:.0f} %."
+        )
+
+    # Total block size
+    block_w = actual_cols * page_w_pt + (actual_cols - 1) * gap_h_pt
+    block_h = actual_rows * page_h_pt + (actual_rows - 1) * gap_v_pt
 
     # Align block within available area
     if req.h_align == "left":
@@ -208,15 +234,6 @@ def _impose_grid(req: ImpositionRequest) -> ImpositionResult:
         block_y = margin_t + (avail_h - block_h) / 2
 
     sheets_needed = math.ceil(len(page_indices) / pages_per_sheet)
-    warnings: list[str] = []
-
-    if block_w > avail_w or block_h > avail_h:
-        warnings.append(
-            f"Stránky se nevejdou do dostupné plochy archu "
-            f"({block_w * PT_TO_MM:.1f}×{block_h * PT_TO_MM:.1f} mm > "
-            f"{avail_w * PT_TO_MM:.1f}×{avail_h * PT_TO_MM:.1f} mm). "
-            f"Zmenšete měřítko nebo okraje."
-        )
 
     out_doc = fitz.open()
 
@@ -228,12 +245,10 @@ def _impose_grid(req: ImpositionRequest) -> ImpositionResult:
             if pi >= len(page_indices):
                 break
             src_page_idx = page_indices[pi]
-            src_page = src[src_page_idx]
 
-            row = slot // req.cols
-            col = slot % req.cols
+            row = slot // actual_cols
+            col = slot % actual_cols
 
-            # Exact position of this page (no centering within oversized cell)
             x0 = block_x + col * (page_w_pt + gap_h_pt)
             y0 = block_y + row * (page_h_pt + gap_v_pt)
             dest_rect = fitz.Rect(x0, y0, x0 + page_w_pt, y0 + page_h_pt)
@@ -263,6 +278,9 @@ def _impose_grid(req: ImpositionRequest) -> ImpositionResult:
         sheet_width_mm=req.sheet_width_mm,
         sheet_height_mm=req.sheet_height_mm,
         warnings=warnings,
+        actual_scale=actual_scale,
+        actual_cols=actual_cols,
+        actual_rows=actual_rows,
     )
 
 
@@ -371,19 +389,27 @@ def _impose_cut_stack(req: ImpositionRequest) -> ImpositionResult:
     warnings: list[str] = []
     out_doc = fitz.open()
     sheet_count = 0
+    actual_scale = req.scale
+    actual_cols_final = req.cols
+    actual_rows_final = req.rows
 
     for src_page_idx in page_indices:
         src_page = src[src_page_idx]
         src_rect = src_page.rect
-        if req.rotation in (90, 270):
-            src_w, src_h = src_rect.height, src_rect.width
-        else:
-            src_w, src_h = src_rect.width, src_rect.height
 
-        page_w_pt = src_w * req.scale
-        page_h_pt = src_h * req.scale
-        block_w = req.cols * page_w_pt + (req.cols - 1) * gap_h_pt
-        block_h = req.rows * page_h_pt + (req.rows - 1) * gap_v_pt
+        scale_mode = "fit_grid" if req.auto_fit else "fit_scale"
+        page_w_pt, page_h_pt, actual_scale, actual_cols_cs, actual_rows_cs = _resolve_grid_layout(
+            src_rect.width, src_rect.height,
+            req.cols, req.rows,
+            avail_w, avail_h, gap_h_pt, gap_v_pt,
+            req.scale, scale_mode, req.rotation,
+        )
+        actual_cols_final = actual_cols_cs
+        actual_rows_final = actual_rows_cs
+        pages_per_sheet = actual_cols_cs * actual_rows_cs
+
+        block_w = actual_cols_cs * page_w_pt + (actual_cols_cs - 1) * gap_h_pt
+        block_h = actual_rows_cs * page_h_pt + (actual_rows_cs - 1) * gap_v_pt
 
         if req.h_align == "left":
             bx = margin_l
@@ -403,8 +429,8 @@ def _impose_cut_stack(req: ImpositionRequest) -> ImpositionResult:
         sheet_count += 1
 
         for slot in range(pages_per_sheet):
-            row = slot // req.cols
-            col = slot % req.cols
+            row = slot // actual_cols_cs
+            col = slot % actual_cols_cs
             x0 = bx + col * (page_w_pt + gap_h_pt)
             y0 = by + row * (page_h_pt + gap_v_pt)
             dest_rect = fitz.Rect(x0, y0, x0 + page_w_pt, y0 + page_h_pt)
@@ -431,6 +457,9 @@ def _impose_cut_stack(req: ImpositionRequest) -> ImpositionResult:
         sheet_width_mm=req.sheet_width_mm,
         sheet_height_mm=req.sheet_height_mm,
         warnings=warnings,
+        actual_scale=actual_scale,
+        actual_cols=actual_cols_final,
+        actual_rows=actual_rows_final,
     )
 
 
@@ -463,6 +492,47 @@ def _auto_fit_grid(
             return cols1, rows1, True
 
     return cols0, rows0, False
+
+
+def _resolve_grid_layout(
+    src_w_pt: float, src_h_pt: float,
+    cols: int, rows: int,
+    avail_w: float, avail_h: float,
+    gap_h_pt: float, gap_v_pt: float,
+    requested_scale: float,
+    scale_mode: str,  # "fit_scale" = dopočítej scale z rows/cols, "fit_grid" = dopočítej rows/cols ze scale
+    rotation: int,
+) -> tuple[float, float, float, float, str]:
+    """
+    Vrátí (page_w_pt, page_h_pt, actual_scale, actual_cols, actual_rows, info_str).
+
+    scale_mode="fit_scale":  rows/cols jsou pevné, scale se dopočítá tak aby se vše vešlo.
+    scale_mode="fit_grid":   scale je pevný, rows/cols se dopočítají (kolik se vejde).
+
+    Nikdy nepřekročí hranice archu.
+    """
+    if rotation in (90, 270):
+        base_w, base_h = src_h_pt, src_w_pt
+    else:
+        base_w, base_h = src_w_pt, src_h_pt
+
+    if scale_mode == "fit_scale":
+        # Dopočítej max scale aby se cols×rows vešlo do avail
+        max_scale_w = (avail_w - (cols - 1) * gap_h_pt) / (cols * base_w)
+        max_scale_h = (avail_h - (rows - 1) * gap_v_pt) / (rows * base_h)
+        actual_scale = min(max_scale_w, max_scale_h, requested_scale)
+        actual_scale = max(actual_scale, 0.01)  # min 1 %
+        actual_cols, actual_rows = cols, rows
+    else:  # fit_grid
+        actual_scale = requested_scale
+        pw = base_w * actual_scale
+        ph = base_h * actual_scale
+        actual_cols = max(1, int((avail_w + gap_h_pt) / (pw + gap_h_pt)))
+        actual_rows = max(1, int((avail_h + gap_v_pt) / (ph + gap_v_pt)))
+
+    pw = base_w * actual_scale
+    ph = base_h * actual_scale
+    return pw, ph, actual_scale, actual_cols, actual_rows
 
 
 def _place_grid_sheet(

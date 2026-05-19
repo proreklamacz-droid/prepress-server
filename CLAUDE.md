@@ -276,6 +276,8 @@ GHOSTSCRIPT_PATH=/usr/bin/gs
 - Oprava mezer — přesné pozicování bez roztahování do buněk
 
 ### 🔜 Sprint 3 — TODO
+- **UI úpravy:**
+  - Měřítko zobrazovat a zadávat v % (místo desetinného čísla 0.85 → 85 %)
 - **Hot folder** — sledovaná složka pro automatické zpracování:
   - Přetažení / nahrání PDF do `hot-in/` spustí automaticky: prepress pipeline → imposice (s výchozím presetem) → výstup do `hot-out/`
   - Konfigurace: která složka, který preset imposice, zda spouštět prepress
