@@ -149,6 +149,8 @@ export interface ImpositionRequestBody {
   marks_info?: boolean;
   marks_registration?: boolean;
   page_range?: number[] | null;
+  auto_fit?: boolean;
+  back_job_id?: string;
 }
 
 export interface Preset {

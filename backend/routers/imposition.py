@@ -62,6 +62,8 @@ class ImpositionRequestBody(BaseModel):
     marks_info: bool = True
     marks_registration: bool = True
     page_range: list[int] | None = None
+    auto_fit: bool = True                  # automaticky vypočítá rows/cols
+    back_job_id: str | None = None         # pro duplex: job_id PDF se zadními stranami
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +106,15 @@ def start_imposition(
         color=body.crop_marks.color,
     )
 
+    # Přeložit back_job_id na cestu ke zdrojovému souboru
+    back_source = None
+    if body.back_job_id:
+        back_job = db.query(Job).filter(Job.id == body.back_job_id).first()
+        if back_job and back_job.source_path and Path(back_job.source_path).exists():
+            # Použij prepressed verzi pokud existuje
+            back_repaired = Path(settings.OUTPUT_DIR) / f"{body.back_job_id}_repaired.pdf"
+            back_source = str(back_repaired) if back_repaired.exists() else back_job.source_path
+
     req = ImpositionRequest(
         source_path=source_for_imposition,
         output_path=output_path,
@@ -129,6 +140,8 @@ def start_imposition(
         marks_info=body.marks_info,
         marks_registration=body.marks_registration,
         page_range=body.page_range,
+        auto_fit=body.auto_fit,
+        back_source_path=back_source,
     )
 
     job.status = "processing"

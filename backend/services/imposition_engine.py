@@ -77,7 +77,7 @@ class ImpositionRequest:
     job_id: str
 
     # Layout type
-    imposition_type: Literal["grid", "booklet_saddle", "cut_stack"] = "grid"
+    imposition_type: Literal["grid", "booklet_saddle", "cut_stack", "step_repeat", "collage", "fill_sheet", "cut_stack_duplex"] = "grid"
 
     # Sheet
     sheet_format: str = "SRA3"
@@ -113,6 +113,13 @@ class ImpositionRequest:
     # Pages to impose (1-based, None = all)
     page_range: list[int] | None = None
 
+    # Auto-fit: ignoruje rows/cols, vypočítá optimální layout
+    auto_fit: bool = False
+
+    # Pro duplex (cut_stack_duplex): strana 2 PDF = zadní strana stránky 1
+    # back_source_path: cesta k PDF se zadními stranami (None = druhá polovina stránek ze source)
+    back_source_path: str | None = None
+
     def sheet_pt(self) -> tuple[float, float]:
         return (self.sheet_width_mm * MM_TO_PT, self.sheet_height_mm * MM_TO_PT)
 
@@ -140,6 +147,14 @@ def run_imposition(request: ImpositionRequest) -> ImpositionResult:
         return _impose_booklet_saddle(request)
     elif request.imposition_type == "cut_stack":
         return _impose_cut_stack(request)
+    elif request.imposition_type == "step_repeat":
+        return _impose_step_repeat(request)
+    elif request.imposition_type == "collage":
+        return _impose_collage(request)
+    elif request.imposition_type == "fill_sheet":
+        return _impose_fill_sheet(request)
+    elif request.imposition_type == "cut_stack_duplex":
+        return _impose_cut_stack_duplex(request)
     else:
         raise ValueError(f"Neznámý typ imposice: {request.imposition_type}")
 
@@ -418,6 +433,441 @@ def _impose_cut_stack(req: ImpositionRequest) -> ImpositionResult:
         warnings=warnings,
     )
 
+
+# ---------------------------------------------------------------------------
+# Helpers pro auto-fit
+# ---------------------------------------------------------------------------
+
+def _auto_fit_grid(
+    page_w_pt: float, page_h_pt: float,
+    avail_w: float, avail_h: float,
+    gap_h_pt: float, gap_v_pt: float,
+    try_rotate: bool = True,
+) -> tuple[int, int, bool]:
+    """
+    Vypočítá optimální (cols, rows) aby se na arch vešlo co nejvíce kopií.
+    Vrátí (cols, rows, rotated) — rotated=True pokud je lepší otočit stránku o 90°.
+    """
+    def fit(pw: float, ph: float) -> tuple[int, int]:
+        cols = max(1, int((avail_w + gap_h_pt) / (pw + gap_h_pt)))
+        rows = max(1, int((avail_h + gap_v_pt) / (ph + gap_v_pt)))
+        return cols, rows
+
+    cols0, rows0 = fit(page_w_pt, page_h_pt)
+    count0 = cols0 * rows0
+
+    if try_rotate and page_w_pt != page_h_pt:
+        cols1, rows1 = fit(page_h_pt, page_w_pt)  # otočená
+        count1 = cols1 * rows1
+        if count1 > count0:
+            return cols1, rows1, True
+
+    return cols0, rows0, False
+
+
+def _place_grid_sheet(
+    out_doc: fitz.Document,
+    src: fitz.Document,
+    slots: list[int],  # 0-based indexy stran pro tento arch
+    page_w_pt: float, page_h_pt: float,
+    cols: int,
+    sheet_w_pt: float, sheet_h_pt: float,
+    block_x: float, block_y: float,
+    gap_h_pt: float, gap_v_pt: float,
+    rotation: int,
+    crop_marks: CropMarkSettings,
+    info_text: str,
+    marks_registration: bool,
+) -> None:
+    """Vloží jednu stránku archu s daným rozložením slotů."""
+    sheet_page = out_doc.new_page(width=sheet_w_pt, height=sheet_h_pt)
+    for slot_i, src_idx in enumerate(slots):
+        row = slot_i // cols
+        col = slot_i % cols
+        x0 = block_x + col * (page_w_pt + gap_h_pt)
+        y0 = block_y + row * (page_h_pt + gap_v_pt)
+        dest_rect = fitz.Rect(x0, y0, x0 + page_w_pt, y0 + page_h_pt)
+        sheet_page.show_pdf_page(dest_rect, src, src_idx, rotate=rotation)
+        _apply_marks(sheet_page, dest_rect, crop_marks)
+    if info_text:
+        _draw_info_text(sheet_page, info_text, sheet_w_pt, sheet_h_pt)
+    if marks_registration:
+        _draw_registration_marks(sheet_page, sheet_w_pt, sheet_h_pt)
+
+
+# ---------------------------------------------------------------------------
+# Step & Repeat — jedna stránka, vyplní celý arch kopiemi
+# ---------------------------------------------------------------------------
+
+def _impose_step_repeat(req: ImpositionRequest) -> ImpositionResult:
+    """
+    Vezme první (nebo vybranou) stránku a zopakuje ji N-krát dokud nevyplní arch.
+    Pokud má PDF více stran (a není zadán page_range), každá strana dostane vlastní arch.
+    """
+    src = fitz.open(req.source_path)
+    page_indices = _resolve_page_range(req.page_range, len(src))
+
+    sheet_w_pt, sheet_h_pt = req.sheet_pt()
+    gap_h_pt = req.gap_h_mm * MM_TO_PT
+    gap_v_pt = req.gap_v_mm * MM_TO_PT
+    margin_l = req.margin_left_mm * MM_TO_PT
+    margin_t = req.margin_top_mm * MM_TO_PT
+    avail_w = sheet_w_pt - (req.margin_left_mm + req.margin_right_mm) * MM_TO_PT
+    avail_h = sheet_h_pt - (req.margin_top_mm + req.margin_bottom_mm) * MM_TO_PT
+
+    warnings: list[str] = []
+    out_doc = fitz.open()
+    sheet_count = 0
+
+    for pi, src_idx in enumerate(page_indices):
+        src_page = src[src_idx]
+        src_rect = src_page.rect
+
+        if req.rotation in (90, 270):
+            base_w, base_h = src_rect.height, src_rect.width
+        else:
+            base_w, base_h = src_rect.width, src_rect.height
+
+        # Auto-fit: zjisti optimální počet + případná rotace
+        cols, rows, rotated = _auto_fit_grid(
+            base_w * req.scale, base_h * req.scale,
+            avail_w, avail_h, gap_h_pt, gap_v_pt,
+        )
+        actual_rot = (req.rotation + 90) % 360 if rotated else req.rotation
+        if rotated:
+            page_w_pt = base_h * req.scale
+            page_h_pt = base_w * req.scale
+        else:
+            page_w_pt = base_w * req.scale
+            page_h_pt = base_h * req.scale
+
+        pages_per_sheet = cols * rows
+        if pages_per_sheet == 0:
+            warnings.append(f"Strana {pi+1}: stránka se nevejde na arch ani jednou.")
+            continue
+
+        block_w = cols * page_w_pt + (cols - 1) * gap_h_pt
+        block_h = rows * page_h_pt + (rows - 1) * gap_v_pt
+        bx = margin_l + (avail_w - block_w) / 2 if req.h_align == "center" else (
+            margin_l if req.h_align == "left" else margin_l + avail_w - block_w)
+        by = margin_t + (avail_h - block_h) / 2 if req.v_align == "center" else (
+            margin_t if req.v_align == "top" else margin_t + avail_h - block_h)
+
+        slots = [src_idx] * pages_per_sheet
+        info = f"{Path(req.source_path).name}  |  Str. {pi+1}  ×{pages_per_sheet}  ({cols}×{rows})"
+        _place_grid_sheet(
+            out_doc, src, slots, page_w_pt, page_h_pt, cols,
+            sheet_w_pt, sheet_h_pt, bx, by, gap_h_pt, gap_v_pt,
+            actual_rot, req.crop_marks, info if req.marks_info else "",
+            req.marks_registration,
+        )
+        sheet_count += 1
+        if rotated:
+            warnings.append(f"Strana {pi+1}: otočena o 90° pro lepší využití archu ({cols}×{rows} = {pages_per_sheet} ks).")
+
+    out_doc.save(req.output_path, garbage=4, deflate=True)
+    out_doc.close()
+    src.close()
+
+    return ImpositionResult(
+        output_path=req.output_path,
+        sheet_count=sheet_count,
+        pages_per_sheet=sheet_count and (cols * rows) or 0,
+        total_pages_imposed=len(page_indices),
+        sheet_width_mm=req.sheet_width_mm,
+        sheet_height_mm=req.sheet_height_mm,
+        warnings=warnings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Koláž — různé stránky, každá jednou, na jeden nebo více archů
+# ---------------------------------------------------------------------------
+
+def _impose_collage(req: ImpositionRequest) -> ImpositionResult:
+    """
+    Vyskládá všechny stránky PDF na co nejméně archů (každá strana jednou).
+    Auto-fit podle první stránky (předpokládá stejně velké stránky).
+    """
+    src = fitz.open(req.source_path)
+    page_indices = _resolve_page_range(req.page_range, len(src))
+
+    sheet_w_pt, sheet_h_pt = req.sheet_pt()
+    gap_h_pt = req.gap_h_mm * MM_TO_PT
+    gap_v_pt = req.gap_v_mm * MM_TO_PT
+    margin_l = req.margin_left_mm * MM_TO_PT
+    margin_t = req.margin_top_mm * MM_TO_PT
+    avail_w = sheet_w_pt - (req.margin_left_mm + req.margin_right_mm) * MM_TO_PT
+    avail_h = sheet_h_pt - (req.margin_top_mm + req.margin_bottom_mm) * MM_TO_PT
+
+    src_rect0 = src[page_indices[0]].rect
+    if req.rotation in (90, 270):
+        base_w, base_h = src_rect0.height, src_rect0.width
+    else:
+        base_w, base_h = src_rect0.width, src_rect0.height
+
+    cols, rows, rotated = _auto_fit_grid(
+        base_w * req.scale, base_h * req.scale,
+        avail_w, avail_h, gap_h_pt, gap_v_pt,
+    )
+    actual_rot = (req.rotation + 90) % 360 if rotated else req.rotation
+    if rotated:
+        page_w_pt = base_h * req.scale
+        page_h_pt = base_w * req.scale
+    else:
+        page_w_pt = base_w * req.scale
+        page_h_pt = base_h * req.scale
+
+    pages_per_sheet = cols * rows
+    warnings: list[str] = []
+    if rotated:
+        warnings.append(f"Stránky otočeny o 90° pro lepší využití archu ({cols}×{rows} = {pages_per_sheet}/arch).")
+
+    block_w = cols * page_w_pt + (cols - 1) * gap_h_pt
+    block_h = rows * page_h_pt + (rows - 1) * gap_v_pt
+    bx = margin_l + (avail_w - block_w) / 2 if req.h_align == "center" else (
+        margin_l if req.h_align == "left" else margin_l + avail_w - block_w)
+    by = margin_t + (avail_h - block_h) / 2 if req.v_align == "center" else (
+        margin_t if req.v_align == "top" else margin_t + avail_h - block_h)
+
+    out_doc = fitz.open()
+    sheets_needed = math.ceil(len(page_indices) / pages_per_sheet)
+
+    for sheet_idx in range(sheets_needed):
+        start = sheet_idx * pages_per_sheet
+        slots = page_indices[start : start + pages_per_sheet]
+        info = f"{Path(req.source_path).name}  |  Arch {sheet_idx+1}/{sheets_needed}  (koláž)"
+        _place_grid_sheet(
+            out_doc, src, slots, page_w_pt, page_h_pt, cols,
+            sheet_w_pt, sheet_h_pt, bx, by, gap_h_pt, gap_v_pt,
+            actual_rot, req.crop_marks, info if req.marks_info else "",
+            req.marks_registration,
+        )
+
+    out_doc.save(req.output_path, garbage=4, deflate=True)
+    out_doc.close()
+    src.close()
+
+    return ImpositionResult(
+        output_path=req.output_path,
+        sheet_count=sheets_needed,
+        pages_per_sheet=pages_per_sheet,
+        total_pages_imposed=len(page_indices),
+        sheet_width_mm=req.sheet_width_mm,
+        sheet_height_mm=req.sheet_height_mm,
+        warnings=warnings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fill Sheet — sada stran se opakuje dokud arch není plný
+# ---------------------------------------------------------------------------
+
+def _impose_fill_sheet(req: ImpositionRequest) -> ImpositionResult:
+    """
+    Opakuje celou sadu stran (např. 2 různé vizitky) dokud nevyplní arch.
+    Výsledek: arch s max kopiemi, přičemž sada se opakuje v pořadí.
+    """
+    src = fitz.open(req.source_path)
+    page_indices = _resolve_page_range(req.page_range, len(src))
+
+    sheet_w_pt, sheet_h_pt = req.sheet_pt()
+    gap_h_pt = req.gap_h_mm * MM_TO_PT
+    gap_v_pt = req.gap_v_mm * MM_TO_PT
+    margin_l = req.margin_left_mm * MM_TO_PT
+    margin_t = req.margin_top_mm * MM_TO_PT
+    avail_w = sheet_w_pt - (req.margin_left_mm + req.margin_right_mm) * MM_TO_PT
+    avail_h = sheet_h_pt - (req.margin_top_mm + req.margin_bottom_mm) * MM_TO_PT
+
+    src_rect0 = src[page_indices[0]].rect
+    if req.rotation in (90, 270):
+        base_w, base_h = src_rect0.height, src_rect0.width
+    else:
+        base_w, base_h = src_rect0.width, src_rect0.height
+
+    cols, rows, rotated = _auto_fit_grid(
+        base_w * req.scale, base_h * req.scale,
+        avail_w, avail_h, gap_h_pt, gap_v_pt,
+    )
+    actual_rot = (req.rotation + 90) % 360 if rotated else req.rotation
+    if rotated:
+        page_w_pt = base_h * req.scale
+        page_h_pt = base_w * req.scale
+    else:
+        page_w_pt = base_w * req.scale
+        page_h_pt = base_h * req.scale
+
+    pages_per_sheet = cols * rows
+    warnings: list[str] = []
+    if rotated:
+        warnings.append(f"Stránky otočeny o 90° ({cols}×{rows} = {pages_per_sheet}/arch).")
+
+    # Zaplní arch opakováním sady stran
+    slots = []
+    while len(slots) < pages_per_sheet:
+        remaining = pages_per_sheet - len(slots)
+        slots += page_indices[:remaining]
+
+    block_w = cols * page_w_pt + (cols - 1) * gap_h_pt
+    block_h = rows * page_h_pt + (rows - 1) * gap_v_pt
+    bx = margin_l + (avail_w - block_w) / 2 if req.h_align == "center" else (
+        margin_l if req.h_align == "left" else margin_l + avail_w - block_w)
+    by = margin_t + (avail_h - block_h) / 2 if req.v_align == "center" else (
+        margin_t if req.v_align == "top" else margin_t + avail_h - block_h)
+
+    set_size = len(page_indices)
+    repeats = math.ceil(pages_per_sheet / set_size)
+    info = (f"{Path(req.source_path).name}  |  "
+            f"Vyplnění archu  {pages_per_sheet}ks  ({set_size} vzorů ×{repeats})")
+
+    out_doc = fitz.open()
+    _place_grid_sheet(
+        out_doc, src, slots, page_w_pt, page_h_pt, cols,
+        sheet_w_pt, sheet_h_pt, bx, by, gap_h_pt, gap_v_pt,
+        actual_rot, req.crop_marks, info if req.marks_info else "",
+        req.marks_registration,
+    )
+    out_doc.save(req.output_path, garbage=4, deflate=True)
+    out_doc.close()
+    src.close()
+
+    return ImpositionResult(
+        output_path=req.output_path,
+        sheet_count=1,
+        pages_per_sheet=pages_per_sheet,
+        total_pages_imposed=pages_per_sheet,
+        sheet_width_mm=req.sheet_width_mm,
+        sheet_height_mm=req.sheet_height_mm,
+        warnings=warnings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cut & Stack Duplex — přední + zadní strana párovaně
+# ---------------------------------------------------------------------------
+
+def _impose_cut_stack_duplex(req: ImpositionRequest) -> ImpositionResult:
+    """
+    Duplex: přední arch (A) + zadní arch (B) tvoří pár pro oboustranný tisk.
+
+    Logika:
+    - Pokud back_source_path: přední = source, zadní = back_source
+    - Jinak: předpokládá PDF se sudým počtem stran, první polovina = přední, druhá = zadní
+      nebo střídání přední/zadní (strana 1=přední1, strana 2=zadní1, strana 3=přední2...)
+
+    Každý pár stran dostane vlastní dvojarch (přední + zadní).
+    """
+    src_front = fitz.open(req.source_path)
+
+    if req.back_source_path:
+        src_back = fitz.open(req.back_source_path)
+        front_indices = _resolve_page_range(req.page_range, len(src_front))
+        back_indices = list(range(len(src_back)))
+    else:
+        # Střídání: liché stránky = přední, sudé = zadní
+        all_indices = _resolve_page_range(req.page_range, len(src_front))
+        front_indices = all_indices[0::2]   # 0, 2, 4...
+        back_indices = all_indices[1::2]    # 1, 3, 5...
+        src_back = src_front
+
+    pairs = min(len(front_indices), len(back_indices))
+    warnings: list[str] = []
+    if len(front_indices) != len(back_indices):
+        warnings.append(
+            f"Počet předních ({len(front_indices)}) ≠ zadních ({len(back_indices)}) stran. "
+            f"Zpracuji {pairs} párů."
+        )
+
+    sheet_w_pt, sheet_h_pt = req.sheet_pt()
+    gap_h_pt = req.gap_h_mm * MM_TO_PT
+    gap_v_pt = req.gap_v_mm * MM_TO_PT
+    margin_l = req.margin_left_mm * MM_TO_PT
+    margin_t = req.margin_top_mm * MM_TO_PT
+    avail_w = sheet_w_pt - (req.margin_left_mm + req.margin_right_mm) * MM_TO_PT
+    avail_h = sheet_h_pt - (req.margin_top_mm + req.margin_bottom_mm) * MM_TO_PT
+
+    src_rect0 = src_front[front_indices[0]].rect
+    if req.rotation in (90, 270):
+        base_w, base_h = src_rect0.height, src_rect0.width
+    else:
+        base_w, base_h = src_rect0.width, src_rect0.height
+
+    cols, rows, rotated = _auto_fit_grid(
+        base_w * req.scale, base_h * req.scale,
+        avail_w, avail_h, gap_h_pt, gap_v_pt,
+    )
+    actual_rot = (req.rotation + 90) % 360 if rotated else req.rotation
+    if rotated:
+        page_w_pt = base_h * req.scale
+        page_h_pt = base_w * req.scale
+    else:
+        page_w_pt = base_w * req.scale
+        page_h_pt = base_h * req.scale
+
+    pages_per_sheet = cols * rows
+    if rotated:
+        warnings.append(f"Stránky otočeny o 90° ({cols}×{rows} = {pages_per_sheet}/arch).")
+
+    block_w = cols * page_w_pt + (cols - 1) * gap_h_pt
+    block_h = rows * page_h_pt + (rows - 1) * gap_v_pt
+    bx = margin_l + (avail_w - block_w) / 2 if req.h_align == "center" else (
+        margin_l if req.h_align == "left" else margin_l + avail_w - block_w)
+    by = margin_t + (avail_h - block_h) / 2 if req.v_align == "center" else (
+        margin_t if req.v_align == "top" else margin_t + avail_h - block_h)
+
+    out_doc = fitz.open()
+    sheet_count = 0
+    pair_idx = 0
+
+    while pair_idx < pairs:
+        # Přední arch
+        front_slots = front_indices[pair_idx : pair_idx + pages_per_sheet]
+        # Doplň opakováním pokud méně než plný arch
+        while len(front_slots) < pages_per_sheet:
+            front_slots.append(front_slots[-1] if front_slots else front_indices[0])
+
+        arch_num = sheet_count // 2 + 1
+        total_arches = math.ceil(pairs / pages_per_sheet)
+
+        _place_grid_sheet(
+            out_doc, src_front, front_slots, page_w_pt, page_h_pt, cols,
+            sheet_w_pt, sheet_h_pt, bx, by, gap_h_pt, gap_v_pt,
+            actual_rot, req.crop_marks,
+            f"{Path(req.source_path).name}  |  Arch {arch_num}/{total_arches}  PŘEDNÍ" if req.marks_info else "",
+            req.marks_registration,
+        )
+        sheet_count += 1
+
+        # Zadní arch (v cut&stack se tiskne v obráceném pořadí pro správné párování)
+        back_slots = back_indices[pair_idx : pair_idx + pages_per_sheet]
+        while len(back_slots) < pages_per_sheet:
+            back_slots.append(back_slots[-1] if back_slots else back_indices[0])
+
+        _place_grid_sheet(
+            out_doc, src_back, back_slots, page_w_pt, page_h_pt, cols,
+            sheet_w_pt, sheet_h_pt, bx, by, gap_h_pt, gap_v_pt,
+            actual_rot, req.crop_marks,
+            f"{Path(req.source_path).name}  |  Arch {arch_num}/{total_arches}  ZADNÍ" if req.marks_info else "",
+            req.marks_registration,
+        )
+        sheet_count += 1
+        pair_idx += pages_per_sheet
+
+    out_doc.save(req.output_path, garbage=4, deflate=True)
+    out_doc.close()
+    src_front.close()
+    if req.back_source_path:
+        src_back.close()
+
+    return ImpositionResult(
+        output_path=req.output_path,
+        sheet_count=sheet_count,
+        pages_per_sheet=pages_per_sheet,
+        total_pages_imposed=pairs,
+        sheet_width_mm=req.sheet_width_mm,
+        sheet_height_mm=req.sheet_height_mm,
+        warnings=warnings,
+    )
 
 # ---------------------------------------------------------------------------
 # Print marks dispatcher

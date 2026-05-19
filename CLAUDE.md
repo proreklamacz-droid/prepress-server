@@ -267,9 +267,23 @@ GHOSTSCRIPT_PATH=/usr/bin/gs
 4. **Imposice** — plný engine: grid, booklet saddle stitch, cut&stack + tiskové značky + náhled archu
 5. **Tab UI** — job detail: tabbed panel Preflight / Imposice / Smart Repair
 
+### ✅ Hotovo mimo sprint (19. 5. 2026)
+- Prepress pipeline (GS): text→křivky, RGB→CMYK Fogra39/47, flatten průhledností, komprese
+- Prepress se spouští před imposicí automaticky pokud byl spuštěn
+- Předvolby imposice (presets): uložit/načíst/smazat pojmenované konfigurace
+- Rozšířené ořezové značky: styl (čárky/rám), délka, odsazení, tloušťka, barva
+- Zarovnání bloku na archu (h_align / v_align)
+- Oprava mezer — přesné pozicování bez roztahování do buněk
+
 ### 🔜 Sprint 3 — TODO
+- **Hot folder** — sledovaná složka pro automatické zpracování:
+  - Přetažení / nahrání PDF do `hot-in/` spustí automaticky: prepress pipeline → imposice (s výchozím presetem) → výstup do `hot-out/`
+  - Konfigurace: která složka, který preset imposice, zda spouštět prepress
+  - Notifikace výsledku (Telegram nebo log)
+  - Implementace: watchdog (Python) jako samostatný Docker service nebo n8n workflow přes API
+- **Frontend** — úpravy UI podle Pavlových přání
+- **Brožura — posuny (creep/shingling)** — kompenzace posunu vnitřních listů podle tloušťky papíru a počtu listů; čím více listů, tím větší posun vnitřních stránek směrem ke středu
 - Dokončení preflight engine (overprint, hairlines, spot barvy, vrstvy, ink coverage, DTF)
-- Smart Repair (RGB→CMYK, flatten transparency, add bleed, DTF bílá vrstva)
 - Telegram notifikace
 
 ### Známé opravy provedené při Sprintu 1

@@ -11,9 +11,13 @@ import {
 } from "@/lib/api";
 
 const IMPOSITION_TYPES = [
-  { value: "grid", label: "Grid (N-up)", desc: "Více stránek na arch, řádky × sloupce" },
-  { value: "booklet_saddle", label: "Brožura (sešit)", desc: "2-up saddle stitch, automatické pořadí" },
-  { value: "cut_stack", label: "Cut & Stack", desc: "Každá stránka N-krát (samolepky, vizitky)" },
+  { value: "step_repeat",      label: "Opakování",        desc: "Jedna strana vyplní celý arch kopiemi (auto-fit)" },
+  { value: "collage",          label: "Koláž",            desc: "Různé strany na arch, každá jednou (auto-fit)" },
+  { value: "fill_sheet",       label: "Vyplnit arch",     desc: "Sada stran se opakuje dokud arch není plný" },
+  { value: "cut_stack_duplex", label: "Rozřez (duplex)",  desc: "Přední + zadní arch pro oboustranný tisk" },
+  { value: "grid",             label: "Grid (ruční)",     desc: "Ručně nastavené řádky × sloupce" },
+  { value: "booklet_saddle",   label: "Brožura (sešit)",  desc: "2-up saddle stitch, automatické pořadí" },
+  { value: "cut_stack",        label: "Cut & Stack",      desc: "Každá strana N-krát (ruční nastavení)" },
 ];
 
 const ROTATIONS = [
@@ -311,6 +315,8 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
   const [vAlign, setVAlign] = useState<"top" | "center" | "bottom">("center");
   const [scale, setScale] = useState(1.0);
   const [rotation, setRotation] = useState(0);
+  const [autoFit, setAutoFit] = useState(true);
+  const [backJobId, setBackJobId] = useState("");
 
   // Marks
   const [marksEnabled, setMarksEnabled] = useState(true);
@@ -384,6 +390,7 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
       marks_fold: marksFold,
       marks_info: marksInfo,
       marks_registration: marksReg,
+      auto_fit: autoFit,
     };
   }
 
@@ -408,6 +415,7 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
     if (s.marks_fold != null) setMarksFold(s.marks_fold as boolean);
     if (s.marks_info != null) setMarksInfo(s.marks_info as boolean);
     if (s.marks_registration != null) setMarksReg(s.marks_registration as boolean);
+    if (s.auto_fit != null) setAutoFit(s.auto_fit as boolean);
     const cm = s.crop_marks as Record<string, unknown> | undefined;
     if (cm) {
       if (cm.enabled != null) setMarksEnabled(cm.enabled as boolean);
@@ -415,7 +423,7 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
       if (cm.length_mm != null) setMarksLength(cm.length_mm as number);
       if (cm.offset_mm != null) setMarksOffset(cm.offset_mm as number);
       if (cm.line_width_mm != null) setMarksLineW(cm.line_width_mm as number);
-      if (cm.color) {
+    if (cm.color) {
         const c = cm.color as string;
         if (c === "black" || c === "white") {
           setMarksColorPreset(c);
@@ -460,6 +468,8 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
       marks_fold: marksFold,
       marks_info: marksInfo,
       marks_registration: marksReg,
+      auto_fit: autoFit,
+      back_job_id: backJobId || undefined,
     };
 
     try {
@@ -525,7 +535,7 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
       </Section>
 
       {/* Grid */}
-      {type !== "booklet_saddle" && (
+      {(type === "grid" || type === "cut_stack") && (
         <Section title="Layout">
           <div className="flex flex-wrap gap-3">
             <NumInput label="Řádky" value={rows} onChange={(v) => setRows(Math.max(1, Math.round(v)))} min={1} max={20} step={1} unit="" />
@@ -569,6 +579,30 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
         </div>
         <NumInput label="Měřítko" value={scale} onChange={setScale} min={0.1} max={2} step={0.01} unit="×" />
       </div>
+
+      {/* Auto-fit info */}
+      {["step_repeat", "collage", "fill_sheet", "cut_stack_duplex"].includes(type) && (
+        <div className="bg-blue-950/30 border border-blue-800/40 rounded-lg px-3 py-2 text-xs text-blue-300">
+          ✦ Počet kopií na arch se vypočítá automaticky. Stránka se případně otočí pro lepší využití.
+        </div>
+      )}
+
+      {/* Duplex — zadní strana */}
+      {type === "cut_stack_duplex" && (
+        <Section title="Zadní strana (duplex)">
+          <p className="text-xs text-zinc-500 mb-2">
+            Job ID PDF se zadními stranami (z dashboardu). Prázdné = střídání stran ze source PDF
+            (str. 1 = přední, str. 2 = zadní, str. 3 = přední…).
+          </p>
+          <input
+            type="text"
+            placeholder="Job ID zadního PDF (volitelné)"
+            value={backJobId}
+            onChange={(e) => setBackJobId(e.target.value)}
+            className="w-full bg-zinc-800 border border-zinc-700 text-zinc-100 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500 placeholder-zinc-600"
+          />
+        </Section>
+      )}
 
       {/* Ořezové značky */}
       <Section title="Ořezové značky / rám">
