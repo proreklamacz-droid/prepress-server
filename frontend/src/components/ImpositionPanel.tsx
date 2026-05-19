@@ -320,11 +320,11 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
         <div className="flex gap-4 flex-wrap">
           <div>
             <p className="text-xs text-zinc-600 mb-1">Horizontálně</p>
-            <BtnGroup options={ALIGNS_H} value={hAlign} onChange={setHAlign} />
+            <BtnGroup options={ALIGNS_H} value={hAlign} onChange={(v) => setHAlign(v as "left" | "center" | "right")} />
           </div>
           <div>
             <p className="text-xs text-zinc-600 mb-1">Vertikálně</p>
-            <BtnGroup options={ALIGNS_V} value={vAlign} onChange={setVAlign} />
+            <BtnGroup options={ALIGNS_V} value={vAlign} onChange={(v) => setVAlign(v as "top" | "center" | "bottom")} />
           </div>
         </div>
       </Section>
@@ -333,7 +333,7 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
       <div className="flex flex-wrap gap-4">
         <div>
           <p className="text-xs text-zinc-500 mb-1">Rotace</p>
-          <BtnGroup options={ROTATIONS} value={rotation as 0|90|180|270} onChange={(v) => setRotation(Number(v))} />
+          <BtnGroup options={ROTATIONS} value={String(rotation) as any} onChange={(v) => setRotation(Number(v))} />
         </div>
         <NumInput label="Měřítko" value={scale} onChange={setScale} min={0.1} max={2} step={0.01} unit="×" />
       </div>
@@ -350,7 +350,7 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
               <BtnGroup
                 options={[{ value: "lines", label: "Čárky" }, { value: "frame", label: "Rám" }]}
                 value={marksStyle}
-                onChange={setMarksStyle}
+                onChange={(v) => setMarksStyle(v as "lines" | "frame")}
               />
             </div>
 

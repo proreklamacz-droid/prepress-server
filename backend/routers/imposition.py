@@ -79,6 +79,10 @@ def start_imposition(
     if not job.source_path or not Path(job.source_path).exists():
         raise HTTPException(status_code=404, detail="Zdrojový soubor nenalezen.")
 
+    # Pokud existuje prepressovaná verze, použij ji jako vstup
+    repaired_path = Path(settings.OUTPUT_DIR) / f"{job_id}_repaired.pdf"
+    source_for_imposition = str(repaired_path) if repaired_path.exists() else job.source_path
+
     if body.sheet_format != "custom" and body.sheet_format in SHEET_FORMATS:
         w_mm, h_mm = SHEET_FORMATS[body.sheet_format]
     else:
@@ -101,7 +105,7 @@ def start_imposition(
     )
 
     req = ImpositionRequest(
-        source_path=job.source_path,
+        source_path=source_for_imposition,
         output_path=output_path,
         job_id=job_id,
         imposition_type=body.imposition_type,

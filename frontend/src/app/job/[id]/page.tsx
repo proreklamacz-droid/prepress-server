@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { api, Job, PreflightResult } from "@/lib/api";
 import StatusBadge from "@/components/StatusBadge";
 import ImpositionPanel from "@/components/ImpositionPanel";
+import PrepressPanel from "@/components/PrepressPanel";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -80,6 +81,8 @@ export default function JobDetailPage() {
   const [activeTab, setActiveTab] = useState<ActionTab>("preflight");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [flattening, setFlattening] = useState(false);
+  const [flattenMsg, setFlattenMsg] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchJob = useCallback(async () => {
@@ -147,6 +150,21 @@ export default function JobDetailPage() {
     }
   }
 
+  async function handleFlatten() {
+    if (!job) return;
+    setFlattening(true);
+    setFlattenMsg(null);
+    try {
+      const res = await api.flattenJob(job.id);
+      setFlattenMsg(res.success ? "✓ " + res.message : "✗ " + res.message);
+      if (res.success) await fetchJob();
+    } catch (err) {
+      setFlattenMsg("✗ " + (err instanceof Error ? err.message : "Chyba"));
+    } finally {
+      setFlattening(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="space-y-4">
@@ -170,7 +188,7 @@ export default function JobDetailPage() {
   const TABS: { id: ActionTab; label: string }[] = [
     { id: "preflight", label: "Preflight" },
     { id: "imposition", label: "Imposice" },
-    { id: "repair", label: "Smart Repair" },
+    { id: "repair", label: "Prepress" },
   ];
 
   return (
@@ -308,6 +326,25 @@ export default function JobDetailPage() {
                 {preflightError && (
                   <p className="text-red-400 text-xs">{preflightError}</p>
                 )}
+
+                <div className="border-t border-zinc-800 pt-3 mt-1">
+                  <p className="text-xs text-zinc-500 mb-2">Oprava PDF pro CorelDRAW / Illustrator</p>
+                  <button
+                    onClick={handleFlatten}
+                    disabled={flattening}
+                    className="w-full bg-amber-700 hover:bg-amber-600 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-medium py-2 px-4 rounded-lg transition-colors text-sm"
+                  >
+                    {flattening ? "Převádím text…" : "Text → křivky (GS)"}
+                  </button>
+                  {flattenMsg && (
+                    <p className={`text-xs mt-1.5 ${flattenMsg.startsWith("✓") ? "text-green-400" : "text-red-400"}`}>
+                      {flattenMsg}
+                    </p>
+                  )}
+                  <p className="text-xs text-zinc-600 mt-1">
+                    Opraví neviditelný text z Canvy, Affinity, Google Docs.
+                  </p>
+                </div>
                 {preflight && (
                   <div className="pt-2 space-y-1">
                     <div className="flex items-center justify-between">
@@ -326,12 +363,7 @@ export default function JobDetailPage() {
 
             {/* Repair tab */}
             {activeTab === "repair" && (
-              <div className="text-center py-8">
-                <p className="text-zinc-600 text-sm">Smart Repair — Sprint 3</p>
-                <p className="text-zinc-700 text-xs mt-1">
-                  RGB→CMYK, flatten transparency, add bleed, DTF bílá vrstva
-                </p>
-              </div>
+              <PrepressPanel job={job} onDone={fetchJob} />
             )}
           </div>
         </div>

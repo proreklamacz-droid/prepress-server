@@ -202,6 +202,11 @@ export const api = {
   ): Promise<{ status: string; job_id: string }> =>
     request(`/jobs/${id}/preflight`, { method: "POST" }),
 
+  flattenJob: (
+    id: string
+  ): Promise<{ job_id: string; success: boolean; message: string }> =>
+    request(`/jobs/${id}/flatten`, { method: "POST" }),
+
   getPreflight: (id: string): Promise<PreflightResult> =>
     request(`/jobs/${id}/preflight`),
 

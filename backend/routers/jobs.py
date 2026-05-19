@@ -1,12 +1,12 @@
 """
-Job endpoints: upload, list, detail, delete, preview (PNG), download (PDF).
+Job endpoints: upload, list, detail, delete, preview (PNG), download (PDF), flatten.
 """
 import hashlib
 import uuid
 from pathlib import Path
 
 import fitz  # PyMuPDF
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from config import settings
 from database import get_db
 from models.job import Job, PreflightResult
 from services.pdf_analyzer import analyze_pdf
+from services.pdf_flattener import flatten_in_place, ghostscript_available
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -25,13 +26,13 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 @router.post("/upload")
 def upload_job(
     file: UploadFile = File(...),
+    flatten: bool = Query(default=False, description="Automaticky převést text na křivky po uploadu"),
     db: Session = Depends(get_db),
 ):
     """Receive a PDF, save it, run analysis, create Job record."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Pouze PDF soubory jsou povoleny.")
 
-    # Read file into memory to check size and compute hash
     content = file.file.read()
     size_bytes = len(content)
     max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
@@ -45,13 +46,21 @@ def upload_job(
     file_hash = hashlib.sha256(content).hexdigest()
     job_id = str(uuid.uuid4())
 
-    # Save file
     upload_dir = Path(settings.UPLOAD_DIR)
     upload_dir.mkdir(parents=True, exist_ok=True)
     dest_path = upload_dir / f"{job_id}.pdf"
     dest_path.write_bytes(content)
 
-    # Analyze PDF metadata
+    flatten_note: str | None = None
+    if flatten:
+        ok, msg = flatten_in_place(str(dest_path), settings.GHOSTSCRIPT_PATH)
+        if ok:
+            flatten_note = "Text převeden na křivky (Ghostscript)."
+            # Recalculate size after flatten
+            size_bytes = dest_path.stat().st_size
+        else:
+            flatten_note = f"Flatten selhal (soubor zachován beze změny): {msg}"
+
     try:
         pdf_meta = analyze_pdf(str(dest_path))
     except Exception as exc:
@@ -69,6 +78,7 @@ def upload_job(
         source_hash=file_hash,
         client_type="internal",
         status="queued",
+        notes=flatten_note,
         **pdf_meta,
     )
     db.add(job)
@@ -98,6 +108,42 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# Flatten — text → křivky
+# ---------------------------------------------------------------------------
+
+@router.post("/{job_id}/flatten")
+def flatten_job(job_id: str, db: Session = Depends(get_db)):
+    """
+    Převede text v PDF na vektorové křivky přes Ghostscript.
+    Přepíše zdrojový soubor jobu. Smaže cached preview.
+    """
+    job = _get_or_404(job_id, db)
+
+    if not job.source_path or not Path(job.source_path).exists():
+        raise HTTPException(status_code=404, detail="Zdrojový soubor nenalezen.")
+
+    if not ghostscript_available(settings.GHOSTSCRIPT_PATH):
+        raise HTTPException(status_code=503, detail="Ghostscript není dostupný na serveru.")
+
+    ok, msg = flatten_in_place(job.source_path, settings.GHOSTSCRIPT_PATH)
+
+    if ok:
+        # Invalidate preview cache
+        output_dir = Path(settings.OUTPUT_DIR)
+        (output_dir / f"{job_id}_preview.png").unlink(missing_ok=True)
+        # Update file size
+        job.source_size_bytes = Path(job.source_path).stat().st_size
+        job.notes = (job.notes or "") + " | Text → křivky (GS)."
+        db.commit()
+
+    return {
+        "job_id": job_id,
+        "success": ok,
+        "message": msg,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Delete
 # ---------------------------------------------------------------------------
 
@@ -105,15 +151,17 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
 def delete_job(job_id: str, db: Session = Depends(get_db)):
     job = _get_or_404(job_id, db)
 
-    # Remove source file
     if job.source_path and Path(job.source_path).exists():
         Path(job.source_path).unlink(missing_ok=True)
 
-    # Remove generated outputs (preview, processed PDF)
     output_dir = Path(settings.OUTPUT_DIR)
-    for pattern in [f"{job_id}_preview.png", f"{job_id}_imposed.pdf", f"{job_id}_repaired.pdf"]:
-        p = output_dir / pattern
-        p.unlink(missing_ok=True)
+    for pattern in [
+        f"{job_id}_preview.png",
+        f"{job_id}_imposed.pdf",
+        f"{job_id}_imposed_preview.png",
+        f"{job_id}_repaired.pdf",
+    ]:
+        (output_dir / pattern).unlink(missing_ok=True)
 
     db.delete(job)
     db.commit()
@@ -138,7 +186,6 @@ def get_preview(job_id: str, db: Session = Depends(get_db)):
         try:
             doc = fitz.open(job.source_path)
             page = doc[0]
-            # 200 DPI: scale factor = 200/72 ≈ 2.78
             mat = fitz.Matrix(200 / 72, 200 / 72)
             pix = page.get_pixmap(matrix=mat, alpha=False)
             pix.save(str(preview_path))
@@ -166,7 +213,6 @@ def download_job(job_id: str, db: Session = Depends(get_db)):
     job = _get_or_404(job_id, db)
 
     output_dir = Path(settings.OUTPUT_DIR)
-    # Prefer repaired → imposed → source
     candidates = [
         output_dir / f"{job_id}_repaired.pdf",
         output_dir / f"{job_id}_imposed.pdf",
