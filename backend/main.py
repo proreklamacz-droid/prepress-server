@@ -15,6 +15,7 @@ import models  # noqa: F401
 
 from routers import jobs, preflight, imposition, repair
 from routers import stats as stats_router
+from routers import presets as presets_router
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +94,7 @@ app.include_router(preflight.router)
 app.include_router(imposition.router)
 app.include_router(repair.router)
 app.include_router(stats_router.router)
+app.include_router(presets_router.router)
 
 
 @app.get("/api/health", tags=["health"])

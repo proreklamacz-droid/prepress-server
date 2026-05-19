@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import {
   api,
   ImpositionRequestBody,
   ImpositionResult,
   SheetFormat,
+  Preset,
   Job,
 } from "@/lib/api";
 
@@ -128,6 +129,161 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+// ─── preset bar ──────────────────────────────────────────────────────────────
+
+function PresetBar({
+  currentSettings,
+  onLoad,
+}: {
+  currentSettings: () => Record<string, unknown>;
+  onLoad: (settings: Record<string, unknown>) => void;
+}) {
+  const [presets, setPresets] = React.useState<Preset[]>([]);
+  const [selected, setSelected] = React.useState<string>("");
+  const [saving, setSaving] = React.useState(false);
+  const [newName, setNewName] = React.useState("");
+  const [showSaveInput, setShowSaveInput] = React.useState(false);
+  const [msg, setMsg] = React.useState<{ text: string; ok: boolean } | null>(null);
+
+  React.useEffect(() => { loadPresets(); }, []);
+
+  async function loadPresets() {
+    try {
+      const data = await api.listPresets();
+      setPresets(data);
+    } catch {}
+  }
+
+  async function handleLoad() {
+    const preset = presets.find((p) => p.id === selected);
+    if (!preset) return;
+    onLoad(preset.settings);
+    setMsg({ text: `Načten: ${preset.name}`, ok: true });
+    setTimeout(() => setMsg(null), 2000);
+  }
+
+  async function handleSave() {
+    if (!newName.trim()) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      // Zkus update pokud jméno existuje, jinak create
+      const existing = presets.find((p) => p.name === newName.trim());
+      if (existing) {
+        await api.updatePreset(existing.id, { settings: currentSettings() });
+        setMsg({ text: `Uložen: ${newName}`, ok: true });
+      } else {
+        const created = await api.createPreset({ name: newName.trim(), settings: currentSettings() });
+        setSelected(created.id);
+        setMsg({ text: `Vytvořen: ${newName}`, ok: true });
+      }
+      setShowSaveInput(false);
+      setNewName("");
+      await loadPresets();
+    } catch (err) {
+      setMsg({ text: err instanceof Error ? err.message : "Chyba", ok: false });
+    } finally {
+      setSaving(false);
+      setTimeout(() => setMsg(null), 3000);
+    }
+  }
+
+  async function handleDelete() {
+    if (!selected) return;
+    const preset = presets.find((p) => p.id === selected);
+    if (!preset || !confirm(`Smazat preset "${preset.name}"?`)) return;
+    try {
+      await api.deletePreset(selected);
+      setSelected("");
+      await loadPresets();
+      setMsg({ text: "Preset smazán.", ok: true });
+      setTimeout(() => setMsg(null), 2000);
+    } catch {}
+  }
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-3 space-y-2">
+      <p className="text-xs text-zinc-500 uppercase tracking-wider">Předvolby</p>
+      <div className="flex gap-2 flex-wrap">
+        {/* Dropdown */}
+        <select
+          value={selected}
+          onChange={(e) => setSelected(e.target.value)}
+          className="flex-1 min-w-0 bg-zinc-800 border border-zinc-700 text-zinc-100 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+        >
+          <option value="">— vyberte preset —</option>
+          {presets.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+
+        {/* Načíst */}
+        <button
+          onClick={handleLoad}
+          disabled={!selected}
+          className="px-3 py-1.5 rounded text-xs font-medium bg-blue-700 hover:bg-blue-600 disabled:bg-zinc-800 disabled:text-zinc-600 text-white transition-colors"
+        >
+          Načíst
+        </button>
+
+        {/* Uložit jako */}
+        {!showSaveInput ? (
+          <button
+            onClick={() => {
+              const cur = presets.find((p) => p.id === selected);
+              setNewName(cur?.name || "");
+              setShowSaveInput(true);
+            }}
+            className="px-3 py-1.5 rounded text-xs font-medium bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition-colors"
+          >
+            Uložit jako…
+          </button>
+        ) : (
+          <div className="flex gap-1.5 items-center flex-wrap">
+            <input
+              autoFocus
+              type="text"
+              placeholder="Název presetu"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") setShowSaveInput(false); }}
+              className="w-40 bg-zinc-800 border border-zinc-600 text-zinc-100 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+            />
+            <button
+              onClick={handleSave}
+              disabled={saving || !newName.trim()}
+              className="px-2.5 py-1 rounded text-xs font-medium bg-green-700 hover:bg-green-600 disabled:bg-zinc-700 disabled:text-zinc-500 text-white transition-colors"
+            >
+              {saving ? "…" : "Uložit"}
+            </button>
+            <button
+              onClick={() => setShowSaveInput(false)}
+              className="px-2 py-1 rounded text-xs text-zinc-500 hover:text-zinc-300"
+            >
+              ×
+            </button>
+          </div>
+        )}
+
+        {/* Smazat */}
+        {selected && (
+          <button
+            onClick={handleDelete}
+            className="px-2.5 py-1.5 rounded text-xs text-zinc-600 hover:text-red-400 transition-colors"
+            title="Smazat preset"
+          >
+            🗑
+          </button>
+        )}
+      </div>
+
+      {msg && (
+        <p className={`text-xs ${msg.ok ? "text-green-400" : "text-red-400"}`}>{msg.text}</p>
+      )}
+    </div>
+  );
+}
+
 // ─── main component ──────────────────────────────────────────────────────────
 
 export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: () => void }) {
@@ -198,6 +354,79 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
 
   const marksColor = marksColorPreset === "custom" ? marksColorHex : marksColorPreset;
 
+  // Serializuje aktuální nastavení do objektu pro uložení jako preset
+  function currentSettings(): Record<string, unknown> {
+    return {
+      imposition_type: type,
+      sheet_format: format,
+      sheet_width_mm: customW,
+      sheet_height_mm: customH,
+      rows,
+      cols,
+      gap_h_mm: gapH,
+      gap_v_mm: gapV,
+      margin_top_mm: marginT,
+      margin_right_mm: marginR,
+      margin_bottom_mm: marginB,
+      margin_left_mm: marginL,
+      h_align: hAlign,
+      v_align: vAlign,
+      scale,
+      rotation,
+      crop_marks: {
+        enabled: marksEnabled,
+        style: marksStyle,
+        length_mm: marksLength,
+        offset_mm: marksOffset,
+        line_width_mm: marksLineW,
+        color: marksColorPreset === "custom" ? marksColorHex : marksColorPreset,
+      },
+      marks_fold: marksFold,
+      marks_info: marksInfo,
+      marks_registration: marksReg,
+    };
+  }
+
+  // Načte nastavení z presetu do state
+  function loadFromSettings(s: Record<string, unknown>) {
+    if (s.imposition_type) setType(s.imposition_type as string);
+    if (s.sheet_format) setFormat(s.sheet_format as string);
+    if (s.sheet_width_mm != null) setCustomW(s.sheet_width_mm as number);
+    if (s.sheet_height_mm != null) setCustomH(s.sheet_height_mm as number);
+    if (s.rows != null) setRows(s.rows as number);
+    if (s.cols != null) setCols(s.cols as number);
+    if (s.gap_h_mm != null) setGapH(s.gap_h_mm as number);
+    if (s.gap_v_mm != null) setGapV(s.gap_v_mm as number);
+    if (s.margin_top_mm != null) setMarginT(s.margin_top_mm as number);
+    if (s.margin_right_mm != null) setMarginR(s.margin_right_mm as number);
+    if (s.margin_bottom_mm != null) setMarginB(s.margin_bottom_mm as number);
+    if (s.margin_left_mm != null) setMarginL(s.margin_left_mm as number);
+    if (s.h_align) setHAlign(s.h_align as "left" | "center" | "right");
+    if (s.v_align) setVAlign(s.v_align as "top" | "center" | "bottom");
+    if (s.scale != null) setScale(s.scale as number);
+    if (s.rotation != null) setRotation(s.rotation as number);
+    if (s.marks_fold != null) setMarksFold(s.marks_fold as boolean);
+    if (s.marks_info != null) setMarksInfo(s.marks_info as boolean);
+    if (s.marks_registration != null) setMarksReg(s.marks_registration as boolean);
+    const cm = s.crop_marks as Record<string, unknown> | undefined;
+    if (cm) {
+      if (cm.enabled != null) setMarksEnabled(cm.enabled as boolean);
+      if (cm.style) setMarksStyle(cm.style as "lines" | "frame");
+      if (cm.length_mm != null) setMarksLength(cm.length_mm as number);
+      if (cm.offset_mm != null) setMarksOffset(cm.offset_mm as number);
+      if (cm.line_width_mm != null) setMarksLineW(cm.line_width_mm as number);
+      if (cm.color) {
+        const c = cm.color as string;
+        if (c === "black" || c === "white") {
+          setMarksColorPreset(c);
+        } else {
+          setMarksColorPreset("custom");
+          setMarksColorHex(c);
+        }
+      }
+    }
+  }
+
   async function handleRun() {
     setRunning(true);
     setError(null);
@@ -250,6 +479,9 @@ export default function ImpositionPanel({ job, onDone }: { job: Job; onDone?: ()
 
   return (
     <div className="space-y-5 overflow-y-auto max-h-[70vh] pr-1">
+
+      {/* Předvolby */}
+      <PresetBar currentSettings={currentSettings} onLoad={loadFromSettings} />
 
       {/* Typ */}
       <Section title="Typ imposice">

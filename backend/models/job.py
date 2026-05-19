@@ -144,6 +144,20 @@ class ImpositionConfig(Base):
     output_path = Column(String, nullable=True)
 
 
+class ImpositionPreset(Base):
+    """Pojmenovaná předvolba nastavení imposice — nezávislá na jobu."""
+    __tablename__ = "imposition_presets"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    created_at = Column(DateTime, default=_now, nullable=False)
+    updated_at = Column(DateTime, default=_now, onupdate=_now, nullable=False)
+
+    name = Column(String, nullable=False, unique=True)
+    description = Column(String, nullable=True)
+    # Celé nastavení jako JSON — všechna pole ImpositionRequestBody
+    settings = Column(JSON, nullable=False, default=dict)
+
+
 class RepairLog(Base):
     __tablename__ = "repair_logs"
 

@@ -151,6 +151,15 @@ export interface ImpositionRequestBody {
   page_range?: number[] | null;
 }
 
+export interface Preset {
+  id: string;
+  name: string;
+  description: string | null;
+  settings: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, options);
   if (!res.ok) {
@@ -244,4 +253,24 @@ export const api = {
   previewUrl: (id: string): string => `${BASE}/jobs/${id}/preview`,
 
   downloadUrl: (id: string): string => `${BASE}/jobs/${id}/download`,
+
+  // Presets
+  listPresets: (): Promise<Preset[]> => request("/presets"),
+
+  createPreset: (data: { name: string; description?: string; settings: Record<string, unknown> }): Promise<Preset> =>
+    request("/presets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+
+  updatePreset: (id: string, data: { name?: string; description?: string; settings?: Record<string, unknown> }): Promise<Preset> =>
+    request(`/presets/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+
+  deletePreset: (id: string): Promise<{ deleted: boolean; id: string }> =>
+    request(`/presets/${id}`, { method: "DELETE" }),
 };
