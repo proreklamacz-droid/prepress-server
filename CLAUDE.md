@@ -271,13 +271,17 @@ GHOSTSCRIPT_PATH=/usr/bin/gs
 - Prepress pipeline (GS): text→křivky, RGB→CMYK Fogra39/47, flatten průhledností, komprese
 - Prepress se spouští před imposicí automaticky pokud byl spuštěn
 - Předvolby imposice (presets): uložit/načíst/smazat pojmenované konfigurace
-- Rozšířené ořezové značky: styl (čárky/rám), délka, odsazení, tloušťka, barva
+- Rozšířené ořezové značky: styl (čárky/rám), délka, odsazení, tloušťka, barva — výchozí vypnuto
 - Zarovnání bloku na archu (h_align / v_align)
 - Oprava mezer — přesné pozicování bez roztahování do buněk
+- Nové typy imposice: Opakování (step_repeat), Koláž, Vyplnit arch, Rozřez duplex — auto-fit
+- Grid: měřítko v %, live kalkulačka (výsledné rozložení, využití archu, varování)
+- Grid: nikdy nepřekročí hranice archu — scale se dopočítá nebo rows/cols se omezí
+- Endpoint POST /impose/calculate pro živý feedback bez generování PDF
 
 ### 🔜 Sprint 3 — TODO
-- **UI úpravy:**
-  - Měřítko zobrazovat a zadávat v % (místo desetinného čísla 0.85 → 85 %)
+- **UI úpravy** (na příště — Pavel určí co přesně)
+- **Brožura — posuny (creep/shingling)** — kompenzace posunu vnitřních listů
 - **Hot folder** — sledovaná složka pro automatické zpracování:
   - Přetažení / nahrání PDF do `hot-in/` spustí automaticky: prepress pipeline → imposice (s výchozím presetem) → výstup do `hot-out/`
   - Konfigurace: která složka, který preset imposice, zda spouštět prepress
