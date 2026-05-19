@@ -15,14 +15,14 @@ from config import settings
 from database import get_db
 from models.job import Job, ImpositionConfig
 from services.imposition_engine import (
+    CropMarkSettings,
     ImpositionRequest,
     ImpositionResult,
     run_imposition,
-    sheet_format_dimensions,
     SHEET_FORMATS,
 )
 
-import fitz  # for sheet preview PNG
+import fitz
 
 router = APIRouter(prefix="/api/jobs", tags=["imposition"])
 
@@ -31,22 +31,33 @@ router = APIRouter(prefix="/api/jobs", tags=["imposition"])
 # Request schema
 # ---------------------------------------------------------------------------
 
+class CropMarkBody(BaseModel):
+    enabled: bool = True
+    style: str = "lines"          # "lines" | "frame"
+    length_mm: float = Field(default=5.0, ge=0.5, le=30.0)
+    offset_mm: float = Field(default=3.0, ge=0.0, le=20.0)
+    line_width_mm: float = Field(default=0.1, ge=0.05, le=1.0)
+    color: str = "black"          # "black" | "white" | "#rrggbb"
+
+
 class ImpositionRequestBody(BaseModel):
-    imposition_type: str = "grid"           # grid / booklet_saddle / cut_stack
-    sheet_format: str = "SRA3"              # A4 / A3 / SRA3 / SRA2 / B2 / custom
-    sheet_width_mm: float = 320.0           # used only for custom
-    sheet_height_mm: float = 450.0          # used only for custom
+    imposition_type: str = "grid"
+    sheet_format: str = "SRA3"
+    sheet_width_mm: float = 320.0
+    sheet_height_mm: float = 450.0
     rows: int = Field(default=2, ge=1, le=20)
     cols: int = Field(default=2, ge=1, le=20)
-    gap_h_mm: float = Field(default=3.0, ge=0)
-    gap_v_mm: float = Field(default=3.0, ge=0)
+    gap_h_mm: float = Field(default=0.0, ge=0)
+    gap_v_mm: float = Field(default=0.0, ge=0)
     margin_top_mm: float = Field(default=10.0, ge=0)
     margin_right_mm: float = Field(default=10.0, ge=0)
     margin_bottom_mm: float = Field(default=10.0, ge=0)
     margin_left_mm: float = Field(default=10.0, ge=0)
+    h_align: str = "center"       # "left" | "center" | "right"
+    v_align: str = "center"       # "top"  | "center" | "bottom"
     scale: float = Field(default=1.0, gt=0, le=2.0)
-    rotation: int = 0                       # 0 / 90 / 180 / 270
-    marks_crop: bool = True
+    rotation: int = 0
+    crop_marks: CropMarkBody = Field(default_factory=CropMarkBody)
     marks_fold: bool = False
     marks_info: bool = True
     marks_registration: bool = True
@@ -54,7 +65,7 @@ class ImpositionRequestBody(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# POST /api/jobs/{job_id}/impose  — run imposice synchronně
+# POST /{job_id}/impose
 # ---------------------------------------------------------------------------
 
 @router.post("/{job_id}/impose")
@@ -68,7 +79,6 @@ def start_imposition(
     if not job.source_path or not Path(job.source_path).exists():
         raise HTTPException(status_code=404, detail="Zdrojový soubor nenalezen.")
 
-    # Resolve sheet dimensions
     if body.sheet_format != "custom" and body.sheet_format in SHEET_FORMATS:
         w_mm, h_mm = SHEET_FORMATS[body.sheet_format]
     else:
@@ -80,6 +90,15 @@ def start_imposition(
     output_dir = Path(settings.OUTPUT_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = str(output_dir / f"{job_id}_imposed.pdf")
+
+    crop_settings = CropMarkSettings(
+        enabled=body.crop_marks.enabled,
+        style=body.crop_marks.style,
+        length_mm=body.crop_marks.length_mm,
+        offset_mm=body.crop_marks.offset_mm,
+        line_width_mm=body.crop_marks.line_width_mm,
+        color=body.crop_marks.color,
+    )
 
     req = ImpositionRequest(
         source_path=job.source_path,
@@ -97,16 +116,17 @@ def start_imposition(
         margin_right_mm=body.margin_right_mm,
         margin_bottom_mm=body.margin_bottom_mm,
         margin_left_mm=body.margin_left_mm,
+        h_align=body.h_align,
+        v_align=body.v_align,
         scale=body.scale,
         rotation=body.rotation,
-        marks_crop=body.marks_crop,
+        crop_marks=crop_settings,
         marks_fold=body.marks_fold,
         marks_info=body.marks_info,
         marks_registration=body.marks_registration,
         page_range=body.page_range,
     )
 
-    # Update job status
     job.status = "processing"
     db.commit()
 
@@ -121,7 +141,6 @@ def start_imposition(
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
-    # Persist config
     existing = db.query(ImpositionConfig).filter(ImpositionConfig.job_id == job_id).first()
     if existing:
         db.delete(existing)
@@ -143,7 +162,7 @@ def start_imposition(
         margin_left_mm=body.margin_left_mm,
         scale=body.scale,
         rotation=body.rotation,
-        marks_crop=body.marks_crop,
+        marks_crop=body.crop_marks.enabled,
         marks_fold=body.marks_fold,
         marks_info=body.marks_info,
         marks_registration=body.marks_registration,
@@ -156,7 +175,6 @@ def start_imposition(
     job.processed_on = "rpi"
     db.commit()
 
-    # Invalidate sheet preview cache
     preview_path = output_dir / f"{job_id}_imposed_preview.png"
     preview_path.unlink(missing_ok=True)
 
@@ -175,7 +193,7 @@ def start_imposition(
 
 
 # ---------------------------------------------------------------------------
-# GET /api/jobs/{job_id}/impose  — stav / config
+# GET /{job_id}/impose
 # ---------------------------------------------------------------------------
 
 @router.get("/{job_id}/impose")
@@ -193,7 +211,7 @@ def get_imposition(job_id: str, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# GET /api/jobs/{job_id}/impose/preview  — PNG náhled 1. archu
+# GET /{job_id}/impose/preview
 # ---------------------------------------------------------------------------
 
 @router.get("/{job_id}/impose/preview")
@@ -210,7 +228,7 @@ def get_sheet_preview(job_id: str, db: Session = Depends(get_db)):
         try:
             doc = fitz.open(cfg.output_path)
             page = doc[0]
-            mat = fitz.Matrix(150 / 72, 150 / 72)  # 150 DPI
+            mat = fitz.Matrix(150 / 72, 150 / 72)
             pix = page.get_pixmap(matrix=mat, alpha=False)
             pix.save(str(preview_path))
             doc.close()
@@ -226,7 +244,7 @@ def get_sheet_preview(job_id: str, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# GET /api/jobs/{job_id}/impose/download  — stáhnout imposed PDF
+# GET /{job_id}/impose/download
 # ---------------------------------------------------------------------------
 
 @router.get("/{job_id}/impose/download")
@@ -242,13 +260,12 @@ def download_imposed(job_id: str, db: Session = Depends(get_db)):
                 yield chunk
 
     base = Path(job.source_filename or f"{job_id}.pdf").stem
-    filename = f"{base}_imposed.pdf"
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    headers = {"Content-Disposition": f'attachment; filename="{base}_imposed.pdf"'}
     return StreamingResponse(iter_file(), media_type="application/pdf", headers=headers)
 
 
 # ---------------------------------------------------------------------------
-# GET /api/imposition/formats  — seznam formátů archů
+# GET /imposition/formats
 # ---------------------------------------------------------------------------
 
 @router.get("/imposition/formats", tags=["imposition"])

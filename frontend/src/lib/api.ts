@@ -118,6 +118,15 @@ export interface StorageStats {
   newest_job: string | null;
 }
 
+export interface CropMarkBody {
+  enabled?: boolean;
+  style?: "lines" | "frame";
+  length_mm?: number;
+  offset_mm?: number;
+  line_width_mm?: number;
+  color?: string;
+}
+
 export interface ImpositionRequestBody {
   imposition_type?: string;
   sheet_format?: string;
@@ -131,9 +140,11 @@ export interface ImpositionRequestBody {
   margin_right_mm?: number;
   margin_bottom_mm?: number;
   margin_left_mm?: number;
+  h_align?: string;
+  v_align?: string;
   scale?: number;
   rotation?: number;
-  marks_crop?: boolean;
+  crop_marks?: CropMarkBody;
   marks_fold?: boolean;
   marks_info?: boolean;
   marks_registration?: boolean;
