@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -355,14 +355,13 @@ def download_imposed(job_id: str, db: Session = Depends(get_db)):
     if not cfg or not cfg.output_path or not Path(cfg.output_path).exists():
         raise HTTPException(status_code=404, detail="Výstupní soubor imposice nenalezen.")
 
-    def iter_file():
-        with open(cfg.output_path, "rb") as f:
-            while chunk := f.read(65536):
-                yield chunk
-
     base = Path(job.source_filename or f"{job_id}.pdf").stem
-    headers = {"Content-Disposition": f'attachment; filename="{base}_imposed.pdf"'}
-    return StreamingResponse(iter_file(), media_type="application/pdf", headers=headers)
+    filename = f"{base}_imposed.pdf"
+    return FileResponse(
+        path=cfg.output_path,
+        media_type="application/pdf",
+        filename=filename,
+    )
 
 
 # ---------------------------------------------------------------------------

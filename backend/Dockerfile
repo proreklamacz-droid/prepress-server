@@ -23,4 +23,4 @@ ENV PYTHONPATH=/app/backend
 
 EXPOSE 8687
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8687", "--reload"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8687"]

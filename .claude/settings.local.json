@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /home/pavel/claude-context/prepress-server)",
+      "Bash(ln -sf /home/pavel/projects/prepress-server/CLAUDE.md /home/pavel/claude-context/prepress-server/CLAUDE.md)",
+      "Read(//home/pavel/claude-context/prepress-server/**)"
+    ]
+  }
+}
