@@ -279,6 +279,22 @@ GHOSTSCRIPT_PATH=/usr/bin/gs
 - Grid: nikdy nepřekročí hranice archu — scale se dopočítá nebo rows/cols se omezí
 - Endpoint POST /impose/calculate pro živý feedback bez generování PDF
 
+### ✅ Kvalita exportu — HOTOVO (15. 10. 2026)
+- **ICC Fogra39** se skutečně aplikuje: profil `data/icc/coated_FOGRA39.icc` (ECI ISOcoated_v2_eci.icc, neverzuje se — je v `.gitignore`). Pipeline ho hledá v `/app/data/icc` (bind mount `./data`). GS potřebuje `--permit-file-read=<profil>`, jinak pod `-dSAFER` profil tiše nenačte.
+  - Obnova profilu: stáhnout `https://www.eci.org/lib/exe/eci_offset_2009.zip`, z ní `ISOcoated_v2_eci.icc` uložit jako `data/icc/coated_FOGRA39.icc`.
+  - Fogra47 profil zatím chybí (`uncoated_FOGRA47.icc`) — pipeline v tom případě hlásí varování a použije GS default.
+- **Převzorkování fotek**: jen zmenšení nad 300 dpi (bicubic, threshold 1.0), nic se nezvětšuje. Konstanty `_TARGET_IMAGE_DPI`, `_DOWNSAMPLE_THRESHOLD` v `services/prepress_pipeline.py`; vypnutí přes `PrepressOptions.downsample_images`.
+- **Striktní chyby pipeline** (`run_prepress_pipeline`): nenulový kód GS = selhání; GS řádek s „error“ i při kódu 0 = selhání („zdrojové PDF je pravděpodobně poškozené“); částečný výstup se maže. Po konverzi kontrola výstupu (otevře se, počet stran, rozměry stran ±2 pt). Vstup, který musel MuPDF opravit, = jen varování. Pravidlo „GS error = selhání“ lze zmírnit v `_gs_messages`.
+- **Preflight**: rozlišení pod **200 dpi = varování**, pod 72 dpi = chyba (`services/preflight_engine.py`).
+- **Provoz**: kontejnery backend/worker byly dřív vytvořené ručně (`docker run`) a bez bind mountu `./backend`. Od 15. 10. jsou vytvořené přes compose. Změna Pythonu = `docker restart prepress-server-backend-1 prepress-server-worker-1`; změna Dockerfile/requirements = `docker compose up -d --build backend worker` (v MCP sandboxu `docker compose` není, spouští Pavel na RPi5).
+
+### 🔜 Schváleno, ve frontě (15. 10. 2026)
+- **Volba tiskové technologie v preflightu** (presety: Versant 280, DTF, Roland, Mutoh UV, Riso) — cílové dpi, limit TAC, barevný prostor, spadávky; předává se s jobem při napojení na příjem zakázek.
+- **Zpráva pro zákazníka**: kaskáda Groq → Ollama na ai-core → šablonová zpráva bez LLM (vždy vznikne).
+- **Kontrolní náhled**: u DTF průhlednost s šachovnicí (PyMuPDF alpha), bílá vrstva zůstane bílá.
+- **Detekce PDF/X** u příchozích souborů (jen informativně do preflightu/zprávy). PDF/X jako výstup zatím ne — vyplatí se jen pro externí tiskárny a muselo by být poslední krok po imposici.
+- **Zkontrolovat `services/pdf_flattener.py`** (používá `routers/jobs.py` při uploadu) — má stejně shovívavé zacházení s chybami GS jako dřív prepress pipeline?
+
 ### 🔜 Sprint 3 — TODO
 - **UI úpravy** (na příště — Pavel určí co přesně)
 - **Brožura — posuny (creep/shingling)** — kompenzace posunu vnitřních listů

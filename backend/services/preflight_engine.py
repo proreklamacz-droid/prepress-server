@@ -38,10 +38,10 @@ def check_fonts(pdf_path: str) -> tuple[bool, list[dict]]:
 
 
 def check_resolution(
-    pdf_path: str, min_dpi: int = 150
+    pdf_path: str, min_dpi: int = 200
 ) -> tuple[bool, list[dict], int | None]:
     """
-    Check that all raster images meet minimum DPI.
+    Check that all raster images meet minimum DPI (below 200 = warning).
     Returns (ok, issues, min_dpi_found).
     """
     doc = fitz.open(pdf_path)
@@ -178,7 +178,7 @@ def _determine_severity(data: dict) -> str:
         return "error"
     if not data["resolution_ok"]:
         min_dpi = data.get("resolution_min_dpi")
-        # Below 72 dpi is always an error; 72-149 is warning
+        # Below 72 dpi is always an error; 72-199 is warning
         if min_dpi is not None and min_dpi < 72:
             return "error"
         return "warning"

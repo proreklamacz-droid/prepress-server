@@ -24,11 +24,17 @@ logger = logging.getLogger(__name__)
 
 # ICC profily — Ghostscript je má v sobě, nebo je hledáme na disku
 _GS_ICC_DIRS = [
+    "/app/data/icc",
     "/usr/share/ghostscript/icc",
     "/usr/share/ghostscript",
     "/usr/share/color/icc",
     "/usr/lib/ghostscript",
 ]
+
+# Převzorkování fotek: zmenšíme jen to, co je nad cílovým rozlišením (bez zvětšování).
+# Threshold 1.0 = zmenšit vše nad _TARGET_IMAGE_DPI (GS default je 1.5).
+_TARGET_IMAGE_DPI = 300
+_DOWNSAMPLE_THRESHOLD = 1.0
 
 def _find_icc(filename: str) -> str | None:
     """Najde ICC profil na disku."""
@@ -59,6 +65,9 @@ class PrepressOptions:
 
     # Komprese
     compress: bool = True
+
+    # Zmenšit fotky nad 300 dpi na 300 dpi (nižší rozlišení se nemění)
+    downsample_images: bool = True
 
     # Rozlišení pro rasterizaci (při flatten průhlednosti apod.)
     # 0 = GS default (zachovat vektorové prvky kde lze)
@@ -150,6 +159,17 @@ def run_prepress_pipeline(
         ]
         steps_done.append("compress")
 
+    # Převzorkování fotek na tiskové rozlišení
+    if options.downsample_images:
+        for kind in ("Color", "Gray"):
+            cmd += [
+                f"-dDownsample{kind}Images=true",
+                f"-d{kind}ImageDownsampleType=/Bicubic",
+                f"-d{kind}ImageResolution={_TARGET_IMAGE_DPI}",
+                f"-d{kind}ImageDownsampleThreshold={_DOWNSAMPLE_THRESHOLD}",
+            ]
+        steps_done.append(f"downsample_{_TARGET_IMAGE_DPI}dpi")
+
     # Rozlišení
     if options.resolution > 0:
         cmd += [f"-r{options.resolution}"]
@@ -165,20 +185,19 @@ def run_prepress_pipeline(
             timeout=300,  # 5 minut max
         )
 
+        err = (result.stderr or result.stdout or "").strip()
+
+        # Nenulový kód = selhání. Částečný výstup nikdy nepoužijeme.
         if result.returncode != 0:
-            err = (result.stderr or result.stdout or "").strip()
-            # Pokud je to jen warning, zkusíme pokračovat
-            if output_p.exists() and output_p.stat().st_size > 1000:
-                warnings.append(f"GS varování: {err[:300]}")
-            else:
-                return PrepressResult(
-                    success=False,
-                    output_path=output_path,
-                    steps_done=steps_done,
-                    warnings=warnings,
-                    error=f"Ghostscript selhal (kód {result.returncode}): {err[:300]}",
-                    size_before_kb=size_before,
-                )
+            output_p.unlink(missing_ok=True)
+            return PrepressResult(
+                success=False,
+                output_path=output_path,
+                steps_done=steps_done,
+                warnings=warnings,
+                error=f"Ghostscript selhal (kód {result.returncode}): {err[-300:]}",
+                size_before_kb=size_before,
+            )
 
         if not output_p.exists() or output_p.stat().st_size < 100:
             return PrepressResult(
@@ -187,6 +206,35 @@ def run_prepress_pipeline(
                 steps_done=steps_done,
                 warnings=warnings,
                 error="Ghostscript nevygeneroval výstupní soubor.",
+                size_before_kb=size_before,
+            )
+
+        # GS hlásí chyby i s kódem 0 (typicky poškozený vstup) — to je selhání, ne varování
+        gs_errors, gs_warnings = _gs_messages(err)
+        warnings += gs_warnings
+        if gs_errors:
+            output_p.unlink(missing_ok=True)
+            return PrepressResult(
+                success=False,
+                output_path=output_path,
+                steps_done=steps_done,
+                warnings=warnings,
+                error="Ghostscript hlásí chybu (zdrojové PDF je pravděpodobně poškozené): "
+                      + " | ".join(gs_errors),
+                size_before_kb=size_before,
+            )
+
+        # Kontrola výstupu: otevře se, počet stran a rozměry sedí se vstupem
+        problem, check_warnings = _validate_output(input_p, output_p)
+        warnings += check_warnings
+        if problem:
+            output_p.unlink(missing_ok=True)
+            return PrepressResult(
+                success=False,
+                output_path=output_path,
+                steps_done=steps_done,
+                warnings=warnings,
+                error=f"Kontrola výstupu selhala: {problem}",
                 size_before_kb=size_before,
             )
 
@@ -303,6 +351,7 @@ def _build_cmyk_args(
         icc_path = _find_icc(icc_file)
         if icc_path:
             base_args += [
+                f"--permit-file-read={icc_path}",  # bez toho -dSAFER profil nepustí
                 f"-sOutputICCProfile={icc_path}",
                 "-dRenderIntent=1",  # 1 = relativní kolorimetrický
             ]
@@ -321,6 +370,59 @@ def _build_cmyk_args(
 # ---------------------------------------------------------------------------
 # Pomocné
 # ---------------------------------------------------------------------------
+
+def _gs_messages(output: str, limit: int = 3) -> tuple[list[str], list[str]]:
+    """(chyby, varování) z výstupu GS. Chyba = řádek obsahující 'error'."""
+    errors: list[str] = []
+    warns: list[str] = []
+    for ln in (line.strip() for line in output.splitlines()):
+        if "error" in ln.lower():
+            errors.append(ln[:300])
+        elif ln.startswith("****"):
+            warns.append(f"GS hlásí: {ln[:300]}")
+    return errors[:limit], warns[:limit]
+
+
+def _validate_output(input_p: Path, output_p: Path) -> tuple[str | None, list[str]]:
+    """
+    Vrátí (chyba, varování). Chyba = výstup nelze použít.
+    Porovnává počet stran a rozměry stran (nezávisle na otočení).
+    """
+    import fitz  # PyMuPDF
+
+    warns: list[str] = []
+    try:
+        out = fitz.open(str(output_p))
+    except Exception as exc:
+        return f"výstupní PDF nelze otevřít ({exc})", warns
+    if out.page_count < 1:
+        return "výstupní PDF nemá žádné stránky", warns
+
+    try:
+        src = fitz.open(str(input_p))
+    except Exception:
+        warns.append("Vstupní PDF nešlo přečíst pro kontrolu — počet stran a rozměry neověřeny.")
+        return None, warns
+
+    if src.is_repaired:
+        warns.append(
+            "Vstupní PDF je poškozené (při čtení muselo být opraveno) — "
+            "zkontroluj, že výstup obsahuje všechny stránky a obsah."
+        )
+
+    if src.page_count != out.page_count:
+        return f"počet stran nesedí (vstup {src.page_count}, výstup {out.page_count})", warns
+
+    for i in range(src.page_count):
+        a, b = src[i].mediabox, out[i].mediabox
+        sa, sb = sorted((a.width, a.height)), sorted((b.width, b.height))
+        if any(abs(x - y) > 2 for x, y in zip(sa, sb)):
+            return (
+                f"rozměr strany {i + 1} nesedí "
+                f"(vstup {a.width:.0f}×{a.height:.0f} pt, výstup {b.width:.0f}×{b.height:.0f} pt)"
+            ), warns
+    return None, warns
+
 
 def ghostscript_available(gs_path: str = "/usr/bin/gs") -> bool:
     try:
@@ -345,6 +447,7 @@ def flatten_in_place(pdf_path: str, gs_path: str = "/usr/bin/gs") -> tuple[bool,
         flatten_transparency=False,
         convert_to_cmyk=False,
         compress=False,
+        downsample_images=False,
     )
     r = run_prepress_in_place(pdf_path, opts, gs_path)
     return r.success, r.error or (", ".join(r.steps_done))

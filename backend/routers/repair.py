@@ -92,6 +92,7 @@ def start_repair(
         "icc_fogra39": "Aplikován ICC profil Fogra39",
         "icc_fogra47": "Aplikován ICC profil Fogra47",
         "compress": "PDF komprimováno a optimalizováno",
+        "downsample_300dpi": "Fotky nad 300 dpi zmenšeny na 300 dpi",
     }
 
     for step in result.steps_done:
