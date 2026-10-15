@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api, Job, PreflightResult, Technology } from "@/lib/api";
+import { api, CustomerMessage, Job, PreflightResult, Technology } from "@/lib/api";
 import StatusBadge from "@/components/StatusBadge";
 import ImpositionPanel from "@/components/ImpositionPanel";
 import PrepressPanel from "@/components/PrepressPanel";
@@ -474,6 +474,103 @@ export default function JobDetailPage() {
           )}
         </div>
       )}
+      {preflight && (
+        <CustomerMessageCard jobId={job.id} preflightId={preflight.id} />
+      )}
+    </div>
+  );
+}
+
+// Koncept zprávy pro zákazníka (nic se neodesílá; zpráva vzniká po preflightu na pozadí)
+function CustomerMessageCard({
+  jobId,
+  preflightId,
+}: {
+  jobId: string;
+  preflightId: string;
+}) {
+  const [msg, setMsg] = useState<CustomerMessage | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let tries = 0;
+    async function load() {
+      try {
+        const m = await api.getCustomerMessage(jobId);
+        if (!cancelled) setMsg(m);
+      } catch {
+        // zpráva se tvoří chvíli po preflightu — zkus znovu
+        if (!cancelled && ++tries < 15) setTimeout(load, 4000);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId, preflightId]);
+
+  async function handleRegenerate() {
+    setBusy(true);
+    setNote(null);
+    try {
+      setMsg(await api.regenerateCustomerMessage(jobId));
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : "Generování selhalo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCopy() {
+    if (!msg) return;
+    try {
+      await navigator.clipboard.writeText(`Předmět: ${msg.subject}\n\n${msg.body}`);
+      setNote("Zkopírováno.");
+    } catch {
+      setNote("Kopírování není v tomto prohlížeči dostupné.");
+    }
+  }
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h2 className="text-sm font-medium text-zinc-200">Zpráva pro zákazníka</h2>
+        <span className="text-xs text-zinc-500">
+          koncept, neodesláno
+          {msg ? ` · úvod: ${msg.text_source === "strata" ? "Strata" : "šablona"}` : ""}
+        </span>
+      </div>
+
+      {msg ? (
+        <>
+          <p className="text-xs text-zinc-500">Předmět: {msg.subject}</p>
+          <pre className="whitespace-pre-wrap text-sm text-zinc-300 leading-relaxed font-sans bg-zinc-950 border border-zinc-700 rounded-lg p-4">
+            {msg.body}
+          </pre>
+        </>
+      ) : (
+        <p className="text-xs text-zinc-500">Zpráva se připravuje…</p>
+      )}
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleCopy}
+          disabled={!msg}
+          className="text-xs text-blue-400 hover:text-blue-300 disabled:text-zinc-600"
+        >
+          Kopírovat
+        </button>
+        <button
+          onClick={handleRegenerate}
+          disabled={busy}
+          className="text-xs text-zinc-400 hover:text-zinc-200 disabled:text-zinc-600"
+        >
+          {busy ? "Generuji…" : "Vygenerovat znovu"}
+        </button>
+        {note && <span className="text-xs text-zinc-500">{note}</span>}
+      </div>
     </div>
   );
 }

@@ -66,6 +66,18 @@ export interface Technology {
   colorspace: "cmyk" | "any";
 }
 
+export interface CustomerMessage {
+  job_id: string;
+  status: "draft" | "sent";
+  verdict: "ok" | "warning" | "error";
+  subject: string;
+  body: string;
+  findings: { code: string; severity: "error" | "warning"; text: string }[];
+  technology: string;
+  text_source: "strata" | "template";
+  created_at: string;
+}
+
 export interface ImpositionConfig {
   id: string;
   job_id: string;
@@ -229,6 +241,12 @@ export const api = {
     ),
 
   getTechnologies: (): Promise<Technology[]> => request("/technologies"),
+
+  getCustomerMessage: (id: string): Promise<CustomerMessage> =>
+    request(`/jobs/${id}/customer-message`),
+
+  regenerateCustomerMessage: (id: string): Promise<CustomerMessage> =>
+    request(`/jobs/${id}/customer-message`, { method: "POST" }),
 
   flattenJob: (
     id: string

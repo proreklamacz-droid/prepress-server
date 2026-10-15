@@ -3,8 +3,7 @@ Zpráva pro zákazníka k výsledku preflightu.
 
 Fakta (nálezy a rady) skládá vždy šablona z výsledků preflightu. LLM píše jen krátký
 úvodní odstavec; když selže nebo jeho text neprojde kontrolou, použije se šablonový úvod.
-Kaskáda úvodu: Groq -> Strata (přes ollama-gate na ai-core) -> šablona.
-Zpráva vznikne vždy.
+Úvod: Strata (přes ollama-gate na ai-core) -> šablona. Zpráva vznikne vždy.
 """
 import re
 
@@ -104,7 +103,7 @@ def build_findings(data: dict, preset: dict) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Úvodní odstavec: Groq -> Strata -> šablona
+# Úvodní odstavec: Strata -> šablona
 # ---------------------------------------------------------------------------
 
 def _intro_prompt(verdict: str, findings: list[dict]) -> str:
@@ -119,24 +118,6 @@ def _intro_prompt(verdict: str, findings: list[dict]) -> str:
         f"Verdikt kontroly: {verdict} (ok = bez problémů, warning = drobné nedostatky, "
         f"error = nutná oprava).\nNálezy:\n{lines}"
     )
-
-
-def _call_groq(prompt: str) -> str | None:
-    if not settings.GROQ_API_KEY:
-        return None
-    try:
-        from groq import Groq
-
-        client = Groq(api_key=settings.GROQ_API_KEY, timeout=20.0)
-        resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=300,
-        )
-        return resp.choices[0].message.content
-    except Exception:
-        return None
 
 
 def _call_strata(prompt: str) -> str | None:
@@ -180,12 +161,10 @@ def _valid_intro(text: str | None, verdict: str, findings: list[dict]) -> str | 
 
 
 def generate_intro(verdict: str, findings: list[dict]) -> tuple[str, str]:
-    """Vrací (text, zdroj) kde zdroj = groq | strata | template."""
-    prompt = _intro_prompt(verdict, findings)
-    for source, call in (("groq", _call_groq), ("strata", _call_strata)):
-        text = _valid_intro(call(prompt), verdict, findings)
-        if text:
-            return text, source
+    """Vrací (text, zdroj) kde zdroj = strata | template."""
+    text = _valid_intro(_call_strata(_intro_prompt(verdict, findings)), verdict, findings)
+    if text:
+        return text, "strata"
     return _VERDICT_TEXT.get(verdict, _VERDICT_TEXT["warning"]), "template"
 
 
