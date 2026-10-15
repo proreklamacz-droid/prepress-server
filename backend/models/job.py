@@ -32,6 +32,9 @@ class Job(Base):
     client_type = Column(String, nullable=False, default="internal")  # internal / b2b / b2c
     client_id = Column(String, nullable=True)
 
+    # Tisková technologie pro preflight (klíč z presets/technologies.json)
+    technology = Column(String, nullable=False, default="default", server_default="default")
+
     # Processing state
     status = Column(String, nullable=False, default="queued")
     # queued / processing / done / error / needs_attention

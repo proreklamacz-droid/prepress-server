@@ -8,6 +8,8 @@ Stubbed:      transparency, overprint, ink_coverage, hairlines, spot_colors,
 import fitz  # PyMuPDF
 import pikepdf
 
+from services.technologies import get_preset
+
 
 # ---------------------------------------------------------------------------
 # Individual checks
@@ -143,9 +145,44 @@ def check_overprint(pdf_path: str) -> list[dict]:
     return []
 
 
-def check_ink_coverage(pdf_path: str) -> tuple[float | None, list[dict]]:
-    """Stub: calculate TAC via Ghostscript. Returns (None, [])."""
-    return None, []
+_TAC_MAX_PIXELS = 600_000  # strop rastru jedné stránky pro měření (rychlost)
+
+
+def check_ink_coverage(
+    pdf_path: str, max_tac: float | None = None
+) -> tuple[float | None, list[dict]]:
+    """
+    Změří největší celkové pokrytí barvou (TAC, %) přes CMYK raster stránek.
+    Vrací (nejvyšší TAC v dokumentu, problémy). Problém = stránka, kde TAC
+    přesahuje max_tac: [{page, tac, limit}]. Bez max_tac je seznam prázdný.
+    Raster je zmenšený (max ~600 tis. px/stránku); měření bere nejvyšší hodnotu
+    na pixel, takže vyhlazování hran limit nezakryje.
+    """
+    doc = fitz.open(pdf_path)
+    overall: float | None = None
+    issues: list[dict] = []
+
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        area = page.rect.width * page.rect.height
+        if area <= 0:
+            continue
+        scale = min(1.0, (_TAC_MAX_PIXELS / area) ** 0.5)
+        pix = page.get_pixmap(
+            matrix=fitz.Matrix(scale, scale),
+            colorspace=fitz.csCMYK,
+            alpha=False,
+        )
+        s = pix.samples
+        page_max = max(map(sum, zip(s[0::4], s[1::4], s[2::4], s[3::4])))
+        tac = round(page_max / 255 * 100, 1)
+
+        if overall is None or tac > overall:
+            overall = tac
+        if max_tac is not None and tac > max_tac:
+            issues.append({"page": page_num + 1, "tac": tac, "limit": max_tac})
+
+    return overall, issues
 
 
 def check_hairlines(pdf_path: str) -> tuple[bool, list[dict]]:
@@ -167,22 +204,24 @@ def check_layers(pdf_path: str) -> list[dict]:
 # Severity logic
 # ---------------------------------------------------------------------------
 
-def _determine_severity(data: dict) -> str:
+def _determine_severity(data: dict, preset: dict) -> str:
     """
     Decide overall severity based on collected preflight data.
     error   — critical issues (missing fonts, very low DPI)
-    warning — non-critical issues (RGB colorspace, etc.)
+    warning — non-critical issues (low DPI, RGB when preset wants CMYK, TAC over limit)
     ok      — no issues
     """
     if not data["fonts_ok"]:
         return "error"
     if not data["resolution_ok"]:
         min_dpi = data.get("resolution_min_dpi")
-        # Below 72 dpi is always an error; 72-199 is warning
+        # Below 72 dpi is always an error; 72 up to warn_dpi is warning
         if min_dpi is not None and min_dpi < 72:
             return "error"
         return "warning"
-    if data["colorspace"] in ("rgb", "mixed"):
+    if preset["colorspace"] == "cmyk" and data["colorspace"] in ("rgb", "mixed"):
+        return "warning"
+    if data["ink_coverage_issues"]:
         return "warning"
     return "ok"
 
@@ -191,17 +230,28 @@ def _determine_severity(data: dict) -> str:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def run_full_preflight(pdf_path: str) -> dict:
+def run_full_preflight(pdf_path: str, technology: str | None = None) -> dict:
     """
     Run all checks and return a dict ready to be unpacked into PreflightResult.
+    technology — klíč presetu z presets/technologies.json (None = výchozí).
     LLM report is NOT generated here — done in the worker after this returns.
     """
+    preset = get_preset(technology)
+
     fonts_ok, fonts_issues = check_fonts(pdf_path)
-    resolution_ok, resolution_issues, resolution_min_dpi = check_resolution(pdf_path)
+    resolution_ok, resolution_issues, resolution_min_dpi = check_resolution(
+        pdf_path, min_dpi=preset["warn_dpi"]
+    )
     colorspace, colorspace_issues = check_colorspace(pdf_path)
     transparency_issues = check_transparency(pdf_path)
     overprint_issues = check_overprint(pdf_path)
-    ink_coverage_max, ink_coverage_issues = check_ink_coverage(pdf_path)
+    # RGB dokument se do CMYK převádí až při tisku — TAC by byl jen odhad, neměříme
+    if colorspace == "rgb":
+        ink_coverage_max, ink_coverage_issues = None, []
+    else:
+        ink_coverage_max, ink_coverage_issues = check_ink_coverage(
+            pdf_path, preset["max_tac"]
+        )
     hairlines_found, hairlines_issues = check_hairlines(pdf_path)
     spot_colors = check_spot_colors(pdf_path)
     layers_issues = check_layers(pdf_path)
@@ -229,5 +279,5 @@ def run_full_preflight(pdf_path: str) -> dict:
         "severity": "",  # filled below
     }
 
-    data["severity"] = _determine_severity(data)
+    data["severity"] = _determine_severity(data, preset)
     return data

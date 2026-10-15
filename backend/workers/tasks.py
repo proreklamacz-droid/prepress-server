@@ -34,7 +34,7 @@ def task_run_preflight(job_id: str) -> None:
         start = time.time()
 
         from services.preflight_engine import run_full_preflight
-        result_data = run_full_preflight(job.source_path)
+        result_data = run_full_preflight(job.source_path, job.technology)
 
         # Generate LLM report synchronously (asyncio.run is safe in worker context)
         from services.llm_reporter import generate_report

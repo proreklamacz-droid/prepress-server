@@ -288,8 +288,15 @@ GHOSTSCRIPT_PATH=/usr/bin/gs
 - **Preflight**: rozlišení pod **200 dpi = varování**, pod 72 dpi = chyba (`services/preflight_engine.py`).
 - **Provoz**: kontejnery backend/worker byly dřív vytvořené ručně (`docker run`) a bez bind mountu `./backend`. Od 15. 10. jsou vytvořené přes compose. Změna Pythonu = `docker restart prepress-server-backend-1 prepress-server-worker-1`; změna Dockerfile/requirements = `docker compose up -d --build backend worker` (v MCP sandboxu `docker compose` není, spouští Pavel na RPi5).
 
+### ✅ Presety tiskových technologií + měření TAC — HOTOVO (15. 10. 2026)
+- **Presety** v `backend/presets/technologies.json` (JSON, upravitelné bez změny kódu; po úpravě stačí restart backendu+workeru): `default`, `versant_280`, `dtf`, `roland`, `mutoh_uv`. Pole: `warn_dpi` (varování pod; pod 72 dpi vždy chyba), `max_tac` (null = bez limitu), `colorspace` (`cmyk` = RGB je varování, `any` = RGB v pořádku). Loader `services/technologies.py`, seznam `GET /api/technologies`.
+- Rozhodnutí Pavla: spadávky se v preflightu neřeší, Riso mimo, 300 dpi všude (i fotoobrazy), výchozí = `default`. `default` = dosavadní chování (RGB = varování, bez limitu TAC). Hodnoty: Versant TAC 300 %, Roland/Mutoh TAC 300 %, DTF bez limitu.
+- **Napojení:** `Job.technology` (výchozí `default`; sloupec doplňuje idempotentní `_migrate_sqlite()` při startu backendu, `create_all` sloupce nepřidává), `POST /api/jobs/{id}/preflight?technology=<klíč>` (neznámý klíč = 400, volba se uloží do jobu), `run_full_preflight(path, technology)`, frontend: select „Tisková technologie“ v záložce Preflight + řádek TAC.
+- **Měření TAC** (`check_ink_coverage`): PyMuPDF CMYK raster stránky (max ~600 tis. px, ~0,1 s/stránka, bez numpy), bere se nejvyšší součet C+M+Y+K na pixel. Problém = `{page, tac, limit}` jen když preset má `max_tac`. U čistě RGB dokumentu se TAC neměří (None). Raster je zmenšený, tenké čáry s vysokým TAC můžou být podhodnocené.
+- Test: syntetická PDF (reportlab) — TAC 400 % chyceno u Versant/Roland, čistá K=100 % → 100 %, RGB 300 dpi: default/Versant = varování, DTF/Roland/Mutoh = OK; end-to-end přes API + worker OK.
+- **Nasazení:** backend+worker restartovány (bind mount). **Frontend je nutné přebuildit** (nemá bind mount): `docker compose up -d --build frontend` (spouští Pavel na RPi5). Typecheck frontendu neproběhl (v `frontend/` není lokální `typescript`), ověří ho až `next build`.
+
 ### 🔜 Schváleno, ve frontě (15. 10. 2026)
-- **Volba tiskové technologie v preflightu** (presety: Versant 280, DTF, Roland, Mutoh UV, Riso) — cílové dpi, limit TAC, barevný prostor, spadávky; předává se s jobem při napojení na příjem zakázek.
 - **Zpráva pro zákazníka**: kaskáda Groq → Ollama na ai-core → šablonová zpráva bez LLM (vždy vznikne).
 - **Kontrolní náhled**: u DTF průhlednost s šachovnicí (PyMuPDF alpha), bílá vrstva zůstane bílá.
 - **Detekce PDF/X** u příchozích souborů (jen informativně do preflightu/zprávy). PDF/X jako výstup zatím ne — vyplatí se jen pro externí tiskárny a muselo by být poslední krok po imposici.
@@ -305,7 +312,7 @@ GHOSTSCRIPT_PATH=/usr/bin/gs
   - Implementace: watchdog (Python) jako samostatný Docker service nebo n8n workflow přes API
 - **Frontend** — úpravy UI podle Pavlových přání
 - **Brožura — posuny (creep/shingling)** — kompenzace posunu vnitřních listů podle tloušťky papíru a počtu listů; čím více listů, tím větší posun vnitřních stránek směrem ke středu
-- Dokončení preflight engine (overprint, hairlines, spot barvy, vrstvy, ink coverage, DTF)
+- Dokončení preflight engine (overprint, hairlines, spot barvy, vrstvy, DTF) — ink coverage/TAC hotovo
 - Telegram notifikace
 
 ### Známé opravy provedené při Sprintu 1

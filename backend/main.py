@@ -16,6 +16,7 @@ import models  # noqa: F401
 from routers import jobs, preflight, imposition, repair
 from routers import stats as stats_router
 from routers import presets as presets_router
+from routers import technologies as technologies_router
 
 
 # ---------------------------------------------------------------------------
@@ -61,9 +62,22 @@ _scheduler.add_job(_auto_cleanup, "cron", hour=3, minute=0)
 # Lifespan
 # ---------------------------------------------------------------------------
 
+def _migrate_sqlite() -> None:
+    """create_all nepřidává sloupce do existujících tabulek — doplníme je ručně."""
+    from sqlalchemy import inspect, text
+
+    cols = {c["name"] for c in inspect(engine).get_columns("jobs")}
+    if "technology" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE jobs ADD COLUMN technology VARCHAR NOT NULL DEFAULT 'default'"
+            ))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    _migrate_sqlite()
     _scheduler.start()
     yield
     _scheduler.shutdown(wait=False)
@@ -95,6 +109,7 @@ app.include_router(imposition.router)
 app.include_router(repair.router)
 app.include_router(stats_router.router)
 app.include_router(presets_router.router)
+app.include_router(technologies_router.router)
 
 
 @app.get("/api/health", tags=["health"])

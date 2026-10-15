@@ -25,7 +25,7 @@ export interface PreflightResult {
   transparency_issues: { page: number; type: string }[];
   overprint_issues: unknown[];
   ink_coverage_max: number | null;
-  ink_coverage_issues: unknown[];
+  ink_coverage_issues: { page: number; tac: number; limit: number }[];
   hairlines_found: boolean;
   hairlines_issues: unknown[];
   spot_colors: { name: string; page: number; converted: boolean }[];
@@ -46,6 +46,7 @@ export interface Job {
   source_hash: string;
   client_type: string;
   client_id: string | null;
+  technology: string;
   status: "queued" | "processing" | "done" | "error" | "needs_attention";
   processed_on: string | null;
   processing_time_ms: number | null;
@@ -55,6 +56,14 @@ export interface Job {
   is_encrypted: boolean;
   page_dimensions: PageDimension[] | null;
   preflight?: PreflightResult | null;
+}
+
+export interface Technology {
+  key: string;
+  label: string;
+  warn_dpi: number;
+  max_tac: number | null;
+  colorspace: "cmyk" | "any";
 }
 
 export interface ImpositionConfig {
@@ -209,9 +218,17 @@ export const api = {
     request(`/jobs/${id}`, { method: "DELETE" }),
 
   startPreflight: (
-    id: string
+    id: string,
+    technology?: string
   ): Promise<{ status: string; job_id: string }> =>
-    request(`/jobs/${id}/preflight`, { method: "POST" }),
+    request(
+      `/jobs/${id}/preflight${
+        technology ? `?technology=${encodeURIComponent(technology)}` : ""
+      }`,
+      { method: "POST" }
+    ),
+
+  getTechnologies: (): Promise<Technology[]> => request("/technologies"),
 
   flattenJob: (
     id: string

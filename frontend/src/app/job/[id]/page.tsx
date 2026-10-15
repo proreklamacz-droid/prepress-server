@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api, Job, PreflightResult } from "@/lib/api";
+import { api, Job, PreflightResult, Technology } from "@/lib/api";
 import StatusBadge from "@/components/StatusBadge";
 import ImpositionPanel from "@/components/ImpositionPanel";
 import PrepressPanel from "@/components/PrepressPanel";
@@ -79,6 +79,8 @@ export default function JobDetailPage() {
   const [preflightRunning, setPreflightRunning] = useState(false);
   const [preflightError, setPreflightError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActionTab>("preflight");
+  const [technologies, setTechnologies] = useState<Technology[]>([]);
+  const [technology, setTechnology] = useState("default");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [flattening, setFlattening] = useState(false);
@@ -104,6 +106,14 @@ export default function JobDetailPage() {
   }, [fetchJob]);
 
   useEffect(() => {
+    api.getTechnologies().then(setTechnologies).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (job?.technology) setTechnology(job.technology);
+  }, [job?.technology]);
+
+  useEffect(() => {
     if (job && job.status !== "processing" && pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
@@ -122,7 +132,7 @@ export default function JobDetailPage() {
     setPreflightError(null);
     setPreflightRunning(true);
     try {
-      await api.startPreflight(id);
+      await api.startPreflight(id, technology);
       setJob((prev) => prev ? { ...prev, status: "processing" } : prev);
       pollRef.current = setInterval(async () => {
         const updated = await fetchJob();
@@ -314,6 +324,25 @@ export default function JobDetailPage() {
             {/* Preflight tab */}
             {activeTab === "preflight" && (
               <div className="space-y-3">
+                {technologies.length > 0 && (
+                  <div>
+                    <label className="block text-xs text-zinc-500 mb-1">
+                      Tisková technologie
+                    </label>
+                    <select
+                      value={technology}
+                      onChange={(e) => setTechnology(e.target.value)}
+                      disabled={preflightRunning || job.status === "processing"}
+                      className="w-full bg-zinc-950 border border-zinc-700 text-zinc-200 text-sm rounded-lg px-3 py-2"
+                    >
+                      {technologies.map((t) => (
+                        <option key={t.key} value={t.key}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <button
                   onClick={handleStartPreflight}
                   disabled={preflightRunning || job.status === "processing"}
@@ -407,6 +436,19 @@ export default function JobDetailPage() {
                   : "Žádné rastrové obrázky"
               }
             />
+            {preflight.ink_coverage_max !== null && (
+              <CheckRow
+                label={`Pokrytí barvou TAC (max. ${preflight.ink_coverage_max} %)`}
+                ok={preflight.ink_coverage_issues.length === 0}
+                detail={
+                  preflight.ink_coverage_issues.length > 0
+                    ? `Nad limitem ${preflight.ink_coverage_issues[0].limit} % na stranách: ${preflight.ink_coverage_issues
+                        .map((i) => i.page)
+                        .join(", ")}`
+                    : "V limitu zvolené technologie"
+                }
+              />
+            )}
             <div className="flex items-center gap-3 py-2 border-b border-zinc-800">
               <ColorspaceBadge cs={preflight.colorspace} />
               <div>

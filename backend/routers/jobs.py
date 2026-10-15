@@ -259,6 +259,7 @@ def _job_to_dict(job: Job) -> dict:
         "source_hash": job.source_hash,
         "client_type": job.client_type,
         "client_id": job.client_id,
+        "technology": job.technology,
         "status": job.status,
         "processed_on": job.processed_on,
         "processing_time_ms": job.processing_time_ms,

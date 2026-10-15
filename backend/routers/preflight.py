@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models.job import Job, PreflightResult
+from services.technologies import is_valid_key
 from workers.queue import queue_normal
 from workers.tasks import task_run_preflight
 
@@ -13,14 +14,29 @@ router = APIRouter(prefix="/api/jobs", tags=["preflight"])
 
 
 @router.post("/{job_id}/preflight")
-def start_preflight(job_id: str, db: Session = Depends(get_db)):
-    """Enqueue preflight analysis. Returns immediately with queued status."""
+def start_preflight(
+    job_id: str,
+    technology: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Enqueue preflight analysis. Returns immediately with queued status.
+
+    technology — klíč presetu (viz GET /api/technologies); bez něj se použije
+    technologie uložená u jobu.
+    """
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} nenalezen.")
 
     if job.status == "processing":
         raise HTTPException(status_code=409, detail="Job již probíhá.")
+
+    if technology is not None:
+        if not is_valid_key(technology):
+            raise HTTPException(
+                status_code=400, detail=f"Neznámá technologie: {technology}."
+            )
+        job.technology = technology
 
     # Reset to queued state before enqueuing
     job.status = "queued"

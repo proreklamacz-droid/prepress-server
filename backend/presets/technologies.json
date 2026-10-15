@@ -1,0 +1,32 @@
+{
+  "default": {
+    "label": "Bez omezení (výchozí)",
+    "warn_dpi": 200,
+    "max_tac": null,
+    "colorspace": "cmyk"
+  },
+  "versant_280": {
+    "label": "Xerox Versant 280",
+    "warn_dpi": 200,
+    "max_tac": 300,
+    "colorspace": "cmyk"
+  },
+  "dtf": {
+    "label": "DTF",
+    "warn_dpi": 200,
+    "max_tac": null,
+    "colorspace": "any"
+  },
+  "roland": {
+    "label": "Roland TrueVis SG2-540",
+    "warn_dpi": 200,
+    "max_tac": 300,
+    "colorspace": "any"
+  },
+  "mutoh_uv": {
+    "label": "Mutoh XPJ-661 UV",
+    "warn_dpi": 200,
+    "max_tac": 300,
+    "colorspace": "any"
+  }
+}
