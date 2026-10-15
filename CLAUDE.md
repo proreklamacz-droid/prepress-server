@@ -280,7 +280,7 @@ GHOSTSCRIPT_PATH=/usr/bin/gs
 - Endpoint POST /impose/calculate pro živý feedback bez generování PDF
 
 ### ✅ Kvalita exportu — HOTOVO (15. 10. 2026)
-- **ICC Fogra39** se skutečně aplikuje: profil `data/icc/coated_FOGRA39.icc` (ECI ISOcoated_v2_eci.icc, neverzuje se — je v `.gitignore`). Pipeline ho hledá v `/app/data/icc` (bind mount `./data`). GS potřebuje `--permit-file-read=<profil>`, jinak pod `-dSAFER` profil tiše nenačte.
+- **ICC Fogra39** se skutečně aplikuje: profil `data/icc/coated_FOGRA39.icc` (ECI ISOcoated_v2_eci.icc, není v gitu, je v `.gitignore`). Pipeline ho hledá v `/app/data/icc` (bind mount `./data`). GS potřebuje `--permit-file-read=<profil>`, jinak pod `-dSAFER` profil tiše nenačte.
   - Obnova profilu: stáhnout `https://www.eci.org/lib/exe/eci_offset_2009.zip`, z ní `ISOcoated_v2_eci.icc` uložit jako `data/icc/coated_FOGRA39.icc`.
   - Fogra47 profil zatím chybí (`uncoated_FOGRA47.icc`) — pipeline v tom případě hlásí varování a použije GS default.
 - **Převzorkování fotek**: jen zmenšení nad 300 dpi (bicubic, threshold 1.0), nic se nezvětšuje. Konstanty `_TARGET_IMAGE_DPI`, `_DOWNSAMPLE_THRESHOLD` v `services/prepress_pipeline.py`; vypnutí přes `PrepressOptions.downsample_images`.
