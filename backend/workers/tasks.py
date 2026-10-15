@@ -59,6 +59,15 @@ def task_run_preflight(job_id: str) -> None:
         job.processing_time_ms = int((time.time() - start) * 1000)
         db.commit()
 
+        # Zpráva pro zákazníka (draft v outboxu); selhání nesmí shodit preflight
+        try:
+            from services import outbox
+            from services.customer_message import build_customer_message, data_from_result
+
+            outbox.write_message(build_customer_message(job, data_from_result(pr)))
+        except Exception:
+            pass
+
     except Exception as exc:
         db.rollback()
         # Try to mark the job as errored — best-effort

@@ -17,6 +17,7 @@ from routers import jobs, preflight, imposition, repair
 from routers import stats as stats_router
 from routers import presets as presets_router
 from routers import technologies as technologies_router
+from routers import customer_message as customer_message_router
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +31,7 @@ def _auto_cleanup():
     from datetime import datetime, timedelta
     from pathlib import Path
     from config import settings as s
+    from services import outbox
 
     cutoff = datetime.utcnow() - timedelta(days=30)
     db = SessionLocal()
@@ -46,6 +48,7 @@ def _auto_cleanup():
                 f"{job.id}_repaired.pdf",
             ]:
                 (output_dir / pat).unlink(missing_ok=True)
+            outbox.delete_message(job.id)
             db.delete(job)
         db.commit()
         if old:
@@ -110,6 +113,7 @@ app.include_router(repair.router)
 app.include_router(stats_router.router)
 app.include_router(presets_router.router)
 app.include_router(technologies_router.router)
+app.include_router(customer_message_router.router)
 
 
 @app.get("/api/health", tags=["health"])

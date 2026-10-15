@@ -10,6 +10,13 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: str = ""
     UPLOAD_DIR: str = "./data/uploads"
     OUTPUT_DIR: str = "./data/outputs"
+    # Zprávy pro zákazníky (services/outbox.py). Absolutní cesta: kontejnery mají cwd /app/backend,
+    # takže relativní ./data by skončilo v repu místo v bind mountu ./data -> /app/data.
+    OUTBOX_DIR: str = "/app/data/outbox"
+    # Strata přes ollama-gate na ai-core; strata-batch = nižší priorita než chat/fakturace
+    AI_CORE_OLLAMA_URL: str = "http://192.168.0.174:11434"
+    CUSTOMER_MSG_MODEL: str = "strata-batch"
+    CUSTOMER_MSG_TIMEOUT_S: float = 90.0
     MAX_UPLOAD_SIZE_MB: int = 500
     GHOSTSCRIPT_PATH: str = "/usr/bin/gs"
 

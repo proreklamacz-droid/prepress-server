@@ -296,8 +296,16 @@ GHOSTSCRIPT_PATH=/usr/bin/gs
 - Test: syntetická PDF (reportlab) — TAC 400 % chyceno u Versant/Roland, čistá K=100 % → 100 %, RGB 300 dpi: default/Versant = varování, DTF/Roland/Mutoh = OK; end-to-end přes API + worker OK.
 - **Nasazení:** backend+worker restartovány (bind mount). **Frontend je nutné přebuildit** (nemá bind mount): `docker compose up -d --build frontend` (spouští Pavel na RPi5). Typecheck frontendu neproběhl (v `frontend/` není lokální `typescript`), ověří ho až `next build`.
 
+### ✅ Zpráva pro zákazníka + výstupní složka (outbox) — HOTOVO (15. 10. 2026, nic se neodesílá)
+- **Princip:** fakta (nálezy + rady jak opravit) skládá vždy šablona z dat preflightu (`services/customer_message.py`, `build_findings`). LLM píše jen úvodní odstavec (2–3 věty); text z LLM projde jen když nepřidává čísla mimo nálezy, nemá markdown a nic neslibuje („připraveno k tisku", „bez jakýchkoli problémů") ani nepopírá nálezy (`_valid_intro`). Jinak se použije šablonový úvod — zpráva vznikne vždy.
+- **Kaskáda úvodu:** Groq → Strata → šablona. Strata = `strata-batch` přes ollama-gate (`AI_CORE_OLLAMA_URL`, výchozí `http://192.168.0.174:11434`, `CUSTOMER_MSG_MODEL`, timeout 90 s); Strata je výchozí scéna na ai-core (načtená), volá se přes gate, který drží lease. Zdroj textu je v `message.json` jako `text_source` (groq | strata | template).
+- **Tón (zatím):** vykání, podpis „Království tisku", technologie se v textu nezmiňuje (je jen v `message.json`). Závěrečná věta upozorňuje, že jde o automatickou kontrolu bez záruky úplnosti. Vzorové zprávy se budou ještě ladit (šablony textů v `build_findings` / `render_body`, `_VERDICT_TEXT`).
+- **Outbox:** `/app/data/outbox/<job_id>/` (= host `data/outbox/`): `message.json`, `message.txt`, `.ready` (vzniká poslední; čte se jen složka s `.ready`; zápis atomický). `status: draft` — odesílání zatím neexistuje, endpointy pro agenta („neodeslané", „označit jako odeslané") přijdou až bude jasné, kdo zprávy odesílá. Mazání jobu (ruční, `/cleanup`, noční) maže i outbox složku — **až bude agent, upravit tak, aby neodeslané zprávy nemizely**.
+- **Pozor na cestu:** kontejnery mají cwd `/app/backend`, relativní `./data/...` by skončilo v `backend/data` (v repu). Proto je `OUTBOX_DIR` absolutní.
+- **Endpointy:** `GET /api/jobs/{id}/customer-message` (náhled, 404 dokud není), `POST /api/jobs/{id}/customer-message` (znovu složit z uloženého preflightu; 409 bez preflightu). Zpráva se tvoří automaticky na konci `task_run_preflight` (selhání nesmí shodit preflight).
+- **Nález při testu:** Groq model `llama-3.3-70b-versatile` vrací **404 „model_not_found"** (k 15. 10. 2026). Kaskáda to přežije (spadne na Stratu), ale totéž postihuje i stávající interní `llm_reporter.generate_report` — ten chybu tiše spolkne a dává jen pravidlový text. Dostupné na Groq: `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`, `allam-2-7b`. Rozhodnutí o modelu čeká na Pavla (nechat Groq, nebo jít Strata-first).
+
 ### 🔜 Schváleno, ve frontě (15. 10. 2026)
-- **Zpráva pro zákazníka**: kaskáda Groq → Ollama na ai-core → šablonová zpráva bez LLM (vždy vznikne).
 - **Kontrolní náhled**: u DTF průhlednost s šachovnicí (PyMuPDF alpha), bílá vrstva zůstane bílá.
 - **Detekce PDF/X** u příchozích souborů (jen informativně do preflightu/zprávy). PDF/X jako výstup zatím ne — vyplatí se jen pro externí tiskárny a muselo by být poslední krok po imposici.
 - **Zkontrolovat `services/pdf_flattener.py`** (používá `routers/jobs.py` při uploadu) — má stejně shovívavé zacházení s chybami GS jako dřív prepress pipeline?

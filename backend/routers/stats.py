@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from config import settings
 from database import get_db
 from models.job import Job
+from services import outbox
 
 router = APIRouter(prefix="/api/jobs", tags=["stats"])
 
@@ -111,6 +112,7 @@ def cleanup_jobs(
                 except Exception as e:
                     errors.append(f"{job.id}/{pattern}: {e}")
 
+        outbox.delete_message(job.id)
         db.delete(job)
         deleted_jobs += 1
 

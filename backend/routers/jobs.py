@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from config import settings
 from database import get_db
 from models.job import Job, PreflightResult
+from services import outbox
 from services.pdf_analyzer import analyze_pdf
 from services.pdf_flattener import flatten_in_place, ghostscript_available
 
@@ -163,6 +164,7 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
     ]:
         (output_dir / pattern).unlink(missing_ok=True)
 
+    outbox.delete_message(job_id)
     db.delete(job)
     db.commit()
     return {"deleted": True, "job_id": job_id}
