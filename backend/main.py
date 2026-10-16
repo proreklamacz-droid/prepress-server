@@ -46,6 +46,7 @@ def _auto_cleanup():
                 f"{job.id}_imposed.pdf",
                 f"{job.id}_imposed_preview.png",
                 f"{job.id}_repaired.pdf",
+                f"{job.id}_original.pdf",
             ]:
                 (output_dir / pat).unlink(missing_ok=True)
             outbox.delete_message(job.id)

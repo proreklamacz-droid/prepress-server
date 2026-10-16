@@ -440,8 +440,19 @@ def ghostscript_version(gs_path: str = "/usr/bin/gs") -> str | None:
         return None
 
 
-# Zpětná kompatibilita — starý flattener nyní volá pipeline
-def flatten_in_place(pdf_path: str, gs_path: str = "/usr/bin/gs") -> tuple[bool, str]:
+def flatten_in_place(
+    pdf_path: str,
+    gs_path: str = "/usr/bin/gs",
+    backup_path: str | None = None,
+) -> tuple[bool, str]:
+    """
+    Text → křivky přímo v souboru. Postup: převod do dočasného souboru přísnou pipeline,
+    vizuální porovnání s originálem, záloha originálu (backup_path; už existující záloha
+    se nepřepisuje, aby zůstal první originál) a teprve potom přepsání.
+    Při jakémkoli selhání zůstane originál beze změny.
+    """
+    from services.pdf_compare import compare_pdfs
+
     opts = PrepressOptions(
         flatten_text=True,
         flatten_transparency=False,
@@ -449,5 +460,21 @@ def flatten_in_place(pdf_path: str, gs_path: str = "/usr/bin/gs") -> tuple[bool,
         compress=False,
         downsample_images=False,
     )
-    r = run_prepress_in_place(pdf_path, opts, gs_path)
-    return r.success, r.error or (", ".join(r.steps_done))
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        r = run_prepress_pipeline(pdf_path, tmp_path, opts, gs_path)
+        if not r.success:
+            return False, r.error or "Převod selhal."
+        problem, _ = compare_pdfs(pdf_path, tmp_path)
+        if problem:
+            return False, f"Kontrola výstupu selhala: {problem}. Originál zůstal beze změny."
+        if backup_path and not Path(backup_path).exists():
+            Path(backup_path).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(pdf_path, backup_path)
+        shutil.move(tmp_path, pdf_path)
+        return True, "Text převeden na křivky."
+    except Exception as exc:
+        return False, str(exc)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)

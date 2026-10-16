@@ -103,6 +103,7 @@ def cleanup_jobs(
             f"{job.id}_imposed.pdf",
             f"{job.id}_imposed_preview.png",
             f"{job.id}_repaired.pdf",
+            f"{job.id}_original.pdf",
         ]:
             p = output_dir / pattern
             if p.exists():

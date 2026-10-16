@@ -15,7 +15,7 @@ from database import get_db
 from models.job import Job, PreflightResult
 from services import outbox
 from services.pdf_analyzer import analyze_pdf
-from services.pdf_flattener import flatten_in_place, ghostscript_available
+from services.prepress_pipeline import flatten_in_place, ghostscript_available
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -54,7 +54,9 @@ def upload_job(
 
     flatten_note: str | None = None
     if flatten:
-        ok, msg = flatten_in_place(str(dest_path), settings.GHOSTSCRIPT_PATH)
+        ok, msg = flatten_in_place(
+            str(dest_path), settings.GHOSTSCRIPT_PATH, backup_path=_original_backup_path(job_id)
+        )
         if ok:
             flatten_note = "Text převeden na křivky (Ghostscript)."
             # Recalculate size after flatten
@@ -126,7 +128,9 @@ def flatten_job(job_id: str, db: Session = Depends(get_db)):
     if not ghostscript_available(settings.GHOSTSCRIPT_PATH):
         raise HTTPException(status_code=503, detail="Ghostscript není dostupný na serveru.")
 
-    ok, msg = flatten_in_place(job.source_path, settings.GHOSTSCRIPT_PATH)
+    ok, msg = flatten_in_place(
+        job.source_path, settings.GHOSTSCRIPT_PATH, backup_path=_original_backup_path(job_id)
+    )
 
     if ok:
         # Invalidate preview cache
@@ -161,6 +165,7 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
         f"{job_id}_imposed.pdf",
         f"{job_id}_imposed_preview.png",
         f"{job_id}_repaired.pdf",
+        f"{job_id}_original.pdf",
     ]:
         (output_dir / pattern).unlink(missing_ok=True)
 
@@ -243,6 +248,11 @@ def download_job(job_id: str, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _original_backup_path(job_id: str) -> str:
+    """Záloha originálu před přepsáním (mazání jobu ji uklidí společně s výstupy)."""
+    return str(Path(settings.OUTPUT_DIR) / f"{job_id}_original.pdf")
+
 
 def _get_or_404(job_id: str, db: Session) -> Job:
     job = db.query(Job).filter(Job.id == job_id).first()

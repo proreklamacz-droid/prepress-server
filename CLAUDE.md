@@ -306,10 +306,17 @@ GHOSTSCRIPT_PATH=/usr/bin/gs
 - **Nález při testu:** Groq model `llama-3.3-70b-versatile` vrací **404 „model_not_found"** (k 15. 10. 2026). Kaskáda to přežije (spadne na Stratu), ale totéž postihuje i stávající interní `llm_reporter.generate_report` — ten chybu tiše spolkne a dává jen pravidlový text. Dostupné na Groq: `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`, `allam-2-7b`. **Rozhodnuto (Pavel, 15. 10.): Strata.** Groq je z kaskády zprávy pro zákazníka vyřazen (Strata → šablona); `llm_reporter` (interní „Doporučení (AI)" v UI) dál volá mrtvý model a dává jen pravidlový text — zatím neřešeno.
 - **Frontend:** karta „Zpráva pro zákazníka" pod výsledky preflightu v detailu jobu (náhled, Kopírovat, Vygenerovat znovu; po preflightu zprávu načítá s opakováním ~1 min). Vyžaduje rebuild frontendu.
 
+### ✅ Bezpečný převod textu na křivky (flatten) — HOTOVO (16. 10. 2026)
+- **Nález:** upload s `flatten=true` i tlačítko „Text → křivky (GS)" používaly starý `pdf_flattener.py`, který při kódu GS 0 nečetl výstup ani nic nevalidoval a **přepsal nahraný originál** (jediná kopie). Na zkráceném / poškozeném / „smetí" PDF hlásil OK a soubor zničil. Přísná varianta v `prepress_pipeline.py` existovala, ale `routers/jobs.py` ji neimportoval.
+- **Oprava:** `routers/jobs.py` volá `prepress_pipeline.flatten_in_place(path, gs, backup_path=…)`. Postup: převod do dočasného souboru přísnou pipeline (GS error = selhání, kontrola počtu stran/rozměrů) → **vizuální porovnání s originálem** (`services/pdf_compare.py`) → záloha originálu → teprve pak přepsání. Při jakémkoli selhání zůstane originál beze změny a bez zálohy.
+- **Záloha:** `data/outputs/{job_id}_original.pdf` (první originál; při opakovaném převodu se nepřepisuje; sha256 zálohy = `Job.source_hash`). Maže se s jobem (ruční, `/cleanup`, noční) — vzor přidán do všech tří seznamů. Držení tedy stejně jako joby (30 dní). Tlačítko „Vrátit původní" zatím není (v nouzi se záloha vezme z disku).
+- **Porovnání** (`pdf_compare.py`): strany se vykreslí šedě při 50 dpi (strop 600 tis. px, max. 40 stran = rovnoměrný vzorek), rozdíl po pixelech (> 2 % plochy odlišných) a po blocích 16 px (> 2 bloky s průměrným rozdílem > 24). Pillow je v kontejneru přes `reportlab` (v `requirements.txt` není uveden přímo). Kalibrace 16. 10.: normální převod max. blok 2–5 (reálné soubory), 18 (hustý drobný text); chybějící řádek textu ≈ 40, chybějící obrázek 100+ a 25–99 % plochy. **Limity:** nechytí chybějící jedno slovo drobného textu, vlasovou linku ani jemný rozdíl odstínu. Kalibrováno jen na 2 reálných a syntetických souborech — pokud bude kontrola zbytečně odmítat dobré soubory, ladí se konstanty nahoře v `pdf_compare.py`.
+- **Test (API + přímé volání):** dobrý i reálný soubor OK (~1 s), 0 fontů po převodu; zkrácený soubor → odmítnut, originál beze změny; simulovaná vizuální chyba → odmítnuto, bez zálohy; opakovaný převod → záloha zůstává první originál; smazání jobu zálohu uklidí.
+- `services/pdf_flattener.py` už nikdo neimportuje (mrtvý kód) — ponecháno, smazat až na pokyn Pavla.
+
 ### 🔜 Schváleno, ve frontě (15. 10. 2026)
 - **Kontrolní náhled**: u DTF průhlednost s šachovnicí (PyMuPDF alpha), bílá vrstva zůstane bílá.
 - **Detekce PDF/X** u příchozích souborů (jen informativně do preflightu/zprávy). PDF/X jako výstup zatím ne — vyplatí se jen pro externí tiskárny a muselo by být poslední krok po imposici.
-- **Zkontrolovat `services/pdf_flattener.py`** (používá `routers/jobs.py` při uploadu) — má stejně shovívavé zacházení s chybami GS jako dřív prepress pipeline?
 
 ### 🔜 Sprint 3 — TODO
 - **UI úpravy** (na příště — Pavel určí co přesně)
