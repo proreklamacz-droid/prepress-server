@@ -32,6 +32,7 @@ def _auto_cleanup():
     from pathlib import Path
     from config import settings as s
     from services import outbox
+    from services.preview import cache_names
 
     cutoff = datetime.utcnow() - timedelta(days=30)
     db = SessionLocal()
@@ -47,6 +48,7 @@ def _auto_cleanup():
                 f"{job.id}_imposed_preview.png",
                 f"{job.id}_repaired.pdf",
                 f"{job.id}_original.pdf",
+                *cache_names(job.id),
             ]:
                 (output_dir / pat).unlink(missing_ok=True)
             outbox.delete_message(job.id)

@@ -99,6 +99,20 @@ def build_findings(data: dict, preset: dict) -> list[dict]:
             ),
         })
 
+    if data.get("dtf_transparent_bg") is False:
+        white = [i for i in (data.get("transparency_issues") or []) if i.get("type") == "white_background"]
+        pages = _pages(white)
+        where = f" (strana {pages})" if pages else ""
+        findings.append({
+            "code": "white_background",
+            "severity": "warning",
+            "text": (
+                f"Na okrajích strany je neprůhledné bílé pozadí{where}. Pokud má být okolí "
+                "motivu průhledné, uložte prosím soubor s průhledným pozadím, jinak se bílá "
+                "plocha vytiskne."
+            ),
+        })
+
     return findings
 
 
@@ -192,7 +206,7 @@ def data_from_result(pr) -> dict:
     keys = (
         "fonts_ok", "fonts_issues", "resolution_ok", "resolution_issues",
         "resolution_min_dpi", "colorspace", "ink_coverage_max", "ink_coverage_issues",
-        "severity",
+        "dtf_transparent_bg", "transparency_issues", "severity",
     )
     return {k: getattr(pr, k) for k in keys}
 

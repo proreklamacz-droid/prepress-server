@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from config import settings
 from database import get_db
 from models.job import Job, RepairLog
+from services.preview import cache_names
 from services.prepress_pipeline import (
     PrepressOptions,
     ghostscript_available,
@@ -122,6 +123,8 @@ def start_repair(
         job.processed_on = "rpi"
         # Invalidate preview cache
         (output_dir / f"{job_id}_preview.png").unlink(missing_ok=True)
+        for name in cache_names(job_id):
+            (output_dir / name).unlink(missing_ok=True)
     else:
         job.status = "error"
         job.notes = f"Prepress selhal: {result.error}"

@@ -66,6 +66,8 @@ export interface Technology {
   colorspace: "cmyk" | "any";
 }
 
+export type PreviewMode = "paper" | "checker" | "black" | "gray";
+
 export interface CustomerMessage {
   job_id: string;
   status: "draft" | "sent";
@@ -287,7 +289,8 @@ export const api = {
     return request(`/jobs/cleanup${qs}`, { method: "POST" });
   },
 
-  previewUrl: (id: string): string => `${BASE}/jobs/${id}/preview`,
+  previewUrl: (id: string, mode: PreviewMode = "paper"): string =>
+    `${BASE}/jobs/${id}/preview?mode=${mode}`,
 
   downloadUrl: (id: string): string => `${BASE}/jobs/${id}/download`,
 

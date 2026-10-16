@@ -16,6 +16,7 @@ from models.job import Job, PreflightResult
 from services import outbox
 from services.pdf_analyzer import analyze_pdf
 from services.prepress_pipeline import flatten_in_place, ghostscript_available
+from services.preview import PREVIEW_MODES, cache_names, render_preview
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -136,6 +137,8 @@ def flatten_job(job_id: str, db: Session = Depends(get_db)):
         # Invalidate preview cache
         output_dir = Path(settings.OUTPUT_DIR)
         (output_dir / f"{job_id}_preview.png").unlink(missing_ok=True)
+        for name in cache_names(job_id):
+            (output_dir / name).unlink(missing_ok=True)
         # Update file size
         job.source_size_bytes = Path(job.source_path).stat().st_size
         job.notes = (job.notes or "") + " | Text → křivky (GS)."
@@ -166,6 +169,7 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
         f"{job_id}_imposed_preview.png",
         f"{job_id}_repaired.pdf",
         f"{job_id}_original.pdf",
+        *cache_names(job_id),
     ]:
         (output_dir / pattern).unlink(missing_ok=True)
 
@@ -180,22 +184,33 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @router.get("/{job_id}/preview")
-def get_preview(job_id: str, db: Session = Depends(get_db)):
+def get_preview(
+    job_id: str,
+    mode: str = Query(default="paper", description="Podklad: paper | checker | black | gray"),
+    db: Session = Depends(get_db),
+):
+    if mode not in PREVIEW_MODES:
+        raise HTTPException(status_code=400, detail=f"Neznámý režim náhledu: {mode}.")
     job = _get_or_404(job_id, db)
 
     output_dir = Path(settings.OUTPUT_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
-    preview_path = output_dir / f"{job_id}_preview.png"
+    preview_path = output_dir / (
+        f"{job_id}_preview.png" if mode == "paper" else f"{job_id}_preview_{mode}.png"
+    )
 
     if not preview_path.exists():
         if not job.source_path or not Path(job.source_path).exists():
             raise HTTPException(status_code=404, detail="Zdrojový soubor nenalezen.")
         try:
-            doc = fitz.open(job.source_path)
-            page = doc[0]
-            mat = fitz.Matrix(200 / 72, 200 / 72)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            pix.save(str(preview_path))
+            if mode == "paper":
+                doc = fitz.open(job.source_path)
+                page = doc[0]
+                mat = fitz.Matrix(200 / 72, 200 / 72)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                pix.save(str(preview_path))
+            else:
+                render_preview(job.source_path, str(preview_path), mode)
         except Exception as exc:
             raise HTTPException(
                 status_code=500,

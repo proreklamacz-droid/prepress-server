@@ -15,7 +15,8 @@
     "label": "DTF",
     "warn_dpi": 200,
     "max_tac": null,
-    "colorspace": "any"
+    "colorspace": "any",
+    "check_transparent_bg": true
   },
   "roland": {
     "label": "Roland TrueVis SG2-540",

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api, CustomerMessage, Job, PreflightResult, Technology } from "@/lib/api";
+import { api, CustomerMessage, Job, PreflightResult, PreviewMode, Technology } from "@/lib/api";
 import StatusBadge from "@/components/StatusBadge";
 import ImpositionPanel from "@/components/ImpositionPanel";
 import PrepressPanel from "@/components/PrepressPanel";
@@ -81,6 +81,7 @@ export default function JobDetailPage() {
   const [activeTab, setActiveTab] = useState<ActionTab>("preflight");
   const [technologies, setTechnologies] = useState<Technology[]>([]);
   const [technology, setTechnology] = useState("default");
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("paper");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [flattening, setFlattening] = useState(false);
@@ -282,9 +283,32 @@ export default function JobDetailPage() {
           <h2 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
             Náhled první stránky
           </h2>
+          <div className="flex gap-1">
+            {(
+              [
+                ["paper", "Papír"],
+                ["checker", "Šachovnice"],
+                ["black", "Černá"],
+                ["gray", "Šedá"],
+              ] as [PreviewMode, string][]
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                onClick={() => setPreviewMode(mode)}
+                className={`flex-1 text-xs py-1.5 rounded-md transition-colors ${
+                  previewMode === mode
+                    ? "bg-blue-600 text-white"
+                    : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="bg-zinc-950 rounded-lg overflow-hidden flex items-center justify-center min-h-[200px]">
             <img
-              src={api.previewUrl(job.id)}
+              key={previewMode}
+              src={api.previewUrl(job.id, previewMode)}
               alt="Náhled PDF"
               className="max-w-full max-h-[400px] object-contain"
               onError={(e) => {
@@ -446,6 +470,20 @@ export default function JobDetailPage() {
                         .map((i) => i.page)
                         .join(", ")}`
                     : "V limitu zvolené technologie"
+                }
+              />
+            )}
+            {preflight.dtf_transparent_bg !== null && (
+              <CheckRow
+                label="Pozadí (průhlednost)"
+                ok={preflight.dtf_transparent_bg === true}
+                detail={
+                  preflight.dtf_transparent_bg
+                    ? "Okraje stran jsou průhledné"
+                    : `Neprůhledné bílé pozadí na straně: ${preflight.transparency_issues
+                        .filter((i) => i.type === "white_background")
+                        .map((i) => i.page)
+                        .join(", ")} — vytiskne se jako bílá plocha`
                 }
               />
             )}

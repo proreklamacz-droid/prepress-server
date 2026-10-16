@@ -16,6 +16,7 @@ from config import settings
 from database import get_db
 from models.job import Job
 from services import outbox
+from services.preview import cache_names
 
 router = APIRouter(prefix="/api/jobs", tags=["stats"])
 
@@ -104,6 +105,7 @@ def cleanup_jobs(
             f"{job.id}_imposed_preview.png",
             f"{job.id}_repaired.pdf",
             f"{job.id}_original.pdf",
+            *cache_names(job.id),
         ]:
             p = output_dir / pattern
             if p.exists():

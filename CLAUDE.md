@@ -314,8 +314,14 @@ GHOSTSCRIPT_PATH=/usr/bin/gs
 - **Test (API + přímé volání):** dobrý i reálný soubor OK (~1 s), 0 fontů po převodu; zkrácený soubor → odmítnut, originál beze změny; simulovaná vizuální chyba → odmítnuto, bez zálohy; opakovaný převod → záloha zůstává první originál; smazání jobu zálohu uklidí.
 - `services/pdf_flattener.py` už nikdo neimportuje (mrtvý kód) — ponecháno, smazat až na pokyn Pavla.
 
+### ✅ Kontrolní náhled (šachovnice / černá / šedá) + detekce bílého pozadí pro DTF — HOTOVO (16. 10. 2026)
+- **Proč:** bílý obdélník v pozadí a skutečná průhlednost vypadají na bílém papíře stejně; u DTF se bílá plocha vytiskne. Rozhodnutí Pavla: bílý podtisk dělá RIP → řeší se jen průhlednost, ne spotová „White"; barva podkladu je přepínač.
+- **Náhled:** `GET /api/jobs/{id}/preview?mode=paper|checker|black|gray` (výchozí `paper` = původní chování a cache `{id}_preview.png`; neznámý režim = 400). Nové režimy: `services/preview.py`, cache `{id}_preview_{mode}.png`, strop 8 Mpx (velké formáty se zmenší, A0 ≈ 0,4 s). **Pozor:** MuPDF vrací RGBA s barvami předem vynásobenými alfou → skládá se `barva + podklad × (1 − alfa)` (naivní `paste` by poloprůhledné plochy zesvětlil). Cache všech režimů se maže při převodu textu na křivky, repair, mazání jobu, `/cleanup` i nočním úklidu (`cache_names()`).
+- **Detekce** (`check_white_background` v `preflight_engine.py`, jen pro presety s `"check_transparent_bg": true` = DTF): vykreslí strany (max 10, 30 dpi) s průhledností a zkontroluje 3px pás u okraje. ≥ 90 % průhledné → `dtf_transparent_bg = True`; ≥ 90 % neprůhledné bílé → `False` + `{page, type: "white_background"}` v `transparency_issues`, severity `warning`, nález ve zprávě pro zákazníka (`white_background`); jinak `None` (např. barevné pozadí = záměr návrhu). **Limit:** kontroluje jen okraj strany; bílé prvky uvnitř návrhu ukáže jen náhled na tmavém podkladu.
+- **Frontend:** přepínač Papír / Šachovnice / Černá / Šedá nad náhledem, řádek „Pozadí (průhlednost)" ve výsledcích preflightu. Typecheck (`tsc --noEmit` v běžícím kontejneru) prošel. **Jeden rebuild frontendu pokryje všechny čekající změny** (select technologie, TAC řádek, karta zprávy, přepínač náhledu): `docker compose up -d --build frontend` (Pavel).
+- **Test (API):** průhledné logo → `True`; logo s bílým pozadím → `False`, strana 1, `warning`, nález ve zprávě; barevné pozadí → `None`; stejný soubor s technologií Versant → nekontroluje se (`None`). Náhled: u bílého pozadí zůstává roh bílý i v režimu „černá", u průhledného je černý; poloprůhledná červená se skládá správně na všech podkladech.
+
 ### 🔜 Schváleno, ve frontě (15. 10. 2026)
-- **Kontrolní náhled**: u DTF průhlednost s šachovnicí (PyMuPDF alpha), bílá vrstva zůstane bílá.
 - **Detekce PDF/X** u příchozích souborů (jen informativně do preflightu/zprávy). PDF/X jako výstup zatím ne — vyplatí se jen pro externí tiskárny a muselo by být poslední krok po imposici.
 
 ### 🔜 Sprint 3 — TODO

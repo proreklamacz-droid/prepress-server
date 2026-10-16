@@ -145,6 +145,55 @@ def check_overprint(pdf_path: str) -> list[dict]:
     return []
 
 
+_BG_CHECK_DPI = 30     # stačí hrubý raster, kontroluje se jen okraj strany
+_BG_EDGE_PX = 3        # šířka kontrolovaného pásu u okraje
+_BG_MAX_PAGES = 10
+_BG_RATIO = 0.9        # podíl okrajových pixelů, který musí splnit podmínku
+
+
+def check_white_background(pdf_path: str) -> tuple[bool | None, list[dict]]:
+    """
+    Okraje stran: průhledné (dobře) × neprůhledné bílé (bílé pozadí, které se vytiskne).
+    Vrací (transparent_bg, problémy):
+      True  — okraje všech zkontrolovaných stran jsou průhledné
+      False — některá strana má neprůhledné bílé okraje; problémy [{page, type: "white_background"}]
+      None  — nelze jednoznačně určit (barevné nebo smíšené pozadí)
+    Kontroluje jen okraj strany; bílé prvky uvnitř návrhu ukáže kontrolní náhled.
+    """
+    from services.preview import render_rgba
+
+    doc = fitz.open(pdf_path)
+    issues: list[dict] = []
+    all_transparent = True
+
+    for page_num in range(min(len(doc), _BG_MAX_PAGES)):
+        img = render_rgba(doc[page_num], _BG_CHECK_DPI / 72)
+        w, h = img.size
+        e = min(_BG_EDGE_PX, w // 2, h // 2)
+        if e < 1:
+            all_transparent = False
+            continue
+        px = img.load()
+        ring = [
+            px[x, y]
+            for y in range(h)
+            for x in range(w)
+            if x < e or y < e or x >= w - e or y >= h - e
+        ]
+        total = len(ring)
+        transparent = sum(1 for _, _, _, a in ring if a <= 5)
+        white = sum(1 for r, g, b, a in ring if a >= 250 and min(r, g, b) >= 245)
+        if transparent / total >= _BG_RATIO:
+            continue
+        all_transparent = False
+        if white / total >= _BG_RATIO:
+            issues.append({"page": page_num + 1, "type": "white_background"})
+
+    if issues:
+        return False, issues
+    return (True if all_transparent else None), []
+
+
 _TAC_MAX_PIXELS = 600_000  # strop rastru jedné stránky pro měření (rychlost)
 
 
@@ -223,6 +272,8 @@ def _determine_severity(data: dict, preset: dict) -> str:
         return "warning"
     if data["ink_coverage_issues"]:
         return "warning"
+    if data.get("dtf_transparent_bg") is False:
+        return "warning"
     return "ok"
 
 
@@ -256,6 +307,12 @@ def run_full_preflight(pdf_path: str, technology: str | None = None) -> dict:
     spot_colors = check_spot_colors(pdf_path)
     layers_issues = check_layers(pdf_path)
 
+    # Bílé pozadí kontrolujeme jen u technologií, kde se bílá plocha vytiskne (DTF)
+    dtf_transparent_bg: bool | None = None
+    if preset.get("check_transparent_bg"):
+        dtf_transparent_bg, bg_issues = check_white_background(pdf_path)
+        transparency_issues = transparency_issues + bg_issues
+
     data = {
         "fonts_ok": fonts_ok,
         "fonts_issues": fonts_issues,
@@ -273,7 +330,7 @@ def run_full_preflight(pdf_path: str, technology: str | None = None) -> dict:
         "spot_colors": spot_colors,
         "layers_issues": layers_issues,
         "dtf_white_layer": None,
-        "dtf_transparent_bg": None,
+        "dtf_transparent_bg": dtf_transparent_bg,
         "dtf_gamut_issues": None,
         "llm_report_cs": None,
         "severity": "",  # filled below

@@ -7,6 +7,7 @@ Pole presetu:
   warn_dpi   — fotky pod touto hodnotou = varování (pod 72 dpi je vždy chyba)
   max_tac    — limit celkového pokrytí barvou v % (null = neměřit proti limitu)
   colorspace — "cmyk" = RGB je varování, "any" = RGB je v pořádku
+  check_transparent_bg — (volitelné, výchozí false) kontrolovat bílé pozadí na okrajích strany
 """
 import json
 from pathlib import Path
